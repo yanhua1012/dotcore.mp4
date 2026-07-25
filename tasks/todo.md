@@ -1,3 +1,92 @@
+# 2026-07-26 Propose `reduce-mp4-byte-copies`
+
+## Acceptance criteria
+
+- [x] Proposal scopes reproducible performance baselines and contract-preserving Reader/Writer copy reduction without mixing in async I/O.
+- [x] Design preserves public defensive-copy, snapshot, timing, stream ownership, layout, and resource-limit behavior.
+- [x] Delta specs define measurable allocation requirements and unchanged observable MP4 behavior.
+- [x] Tasks are tests/benchmarks-first, independently verifiable, and include compatibility, interoperability, and regression checks.
+- [x] OpenSpec reports all apply-required artifacts complete and strict validation passes.
+
+## Checkpoints
+
+- [x] A — load proposal guidance, repository lessons, main specs, and current exploration findings.
+- [x] B — create the repo-local change scaffold and resolve artifact order.
+- [x] C — author proposal, design, delta specs, and implementation tasks from schema instructions.
+- [x] D — validate artifacts, machine-count requirements/scenarios/tasks, and record apply readiness.
+
+## Risk and rollback
+
+- Risk level: low; this change creates planning artifacts only.
+- Future implementation risk: medium because internal payload ownership and buffering change while public behavior must remain identical.
+- Affected components: Reader payload construction, Writer NAL normalization/fragment buffering, BMFF metadata buffers, tests, benchmarks, and documentation.
+- Rollback: remove `openspec/changes/reduce-mp4-byte-copies` and this planning section; no production behavior or persistent data changes in this proposal turn.
+
+## Dependencies and environment
+
+- Production remains dependency-free `netstandard2.0`; tests, benchmarks, and Console may use .NET 10.
+- Existing sync public API and defensive-copy properties remain unchanged.
+- Async I/O, streaming Reader, public borrowed-memory APIs, and faststart layout redesign are separate future changes.
+
+## Working notes
+
+- Source of truth: repo-local OpenSpec change `reduce-mp4-byte-copies`, schema `spec-driven`.
+- Benchmark baselines must precede implementation and use deterministic fixtures rather than claimed percentages derived from static analysis.
+- Allocation targets must exclude unavoidable caller-visible defensive copies and distinguish event/no-event consumption.
+
+## Results
+
+- Created `reduce-mp4-byte-copies` with proposal, design, three delta specs, and a tests/benchmarks-first task checklist.
+- Scope is intentionally limited to deterministic performance baselines, Reader internal ownership transfer, Writer NAL ranges/fragment payload sources, and single-build `moof` patching; async I/O and public borrowed-memory APIs remain separate changes.
+- Independent artifact reviews found no architecture blocker and led to explicit total-managed-allocation metrics, baseline provenance, required benchmark IDs, a machine-readable 35% allocation/10% throughput comparator, shared Reader validation, and output-failure state tests.
+- Machine counts: 4/4 artifact kinds complete, 3 delta spec files, 7 requirements, 28 scenarios, and 51 unchecked implementation tasks.
+- `openspec validate reduce-mp4-byte-copies --strict --json` passed 1/1; `git diff --check` passed.
+- Final `openspec status --change reduce-mp4-byte-copies` reports all artifacts complete and apply-ready.
+
+# 2026-07-26 Explore async and byte-copy performance
+
+## Acceptance criteria
+
+- [x] Inventory every public `Mp4Writer` and `Mp4Reader` operation and trace its I/O and buffer ownership path.
+- [x] Identify concrete async-I/O and byte-copy opportunities with code evidence, compatibility constraints, and likely benefit.
+- [x] Distinguish changes that improve scalability/latency from changes that improve CPU/allocation throughput.
+- [x] Recommend a prioritized, benchmarkable path without changing product code.
+
+## Checkpoints
+
+- [x] A — load explore guidance, OpenSpec context, repository lessons, and current worktree state.
+- [x] B — inspect writer/reader contracts, implementation, tests, samples, and target frameworks.
+- [x] C — compare minimal API/design options and validate assumptions against existing behavior.
+- [x] D — record findings, risks, unknowns, and a deterministic measurement plan.
+
+## Risk and rollback
+
+- Risk level: low; this is read-only product-code exploration.
+- Affected components under consideration: public writer/reader APIs, stream I/O, payload ownership, tests, documentation, and future benchmarks.
+- Rollback: remove this exploration section; no runtime behavior or OpenSpec artifact changes are made.
+
+## Dependencies and environment
+
+- Production library targets `netstandard2.0`; proposed APIs must respect that target or explicitly justify multi-targeting.
+- Existing public ownership, stream capability, timestamp, layout, and error contracts are compatibility constraints.
+- No performance claim is accepted without a reproducible benchmark or allocation profile.
+
+## Working notes
+
+- OpenSpec has no active changes as of this exploration.
+- Evaluate async I/O and byte-copy reduction separately: async primarily affects blocked threads/scalability, while copy reduction primarily affects allocation/CPU/memory bandwidth.
+
+## Results
+
+- Async should be additive rather than replacing existing signatures. Writer candidates are canonical `WriteVideoNalUnitAsync`, `WriteAudioSampleAsync`, and `FinalizeFileAsync`; reader async value is confined to an async factory that snapshots with `ReadAsync`.
+- Reader enumeration is already memory-only, so async enumeration would add overhead without removing I/O. Async primarily improves responsiveness/thread scalability and must not be presented as an unmeasured throughput gain.
+- Highest-confidence copy reductions are internal and contract-preserving: remove duplicate reader `Slice` → sample-constructor copies, represent normalized writer video as ranges over already-owned sample data, and avoid rebuilding/materializing fragmented metadata and payloads where practical.
+- A public memory-view API is lower priority because the library targets dependency-free `netstandard2.0`; it requires a package or multi-target decision plus explicit mutability/lifetime semantics.
+- Async writer cancellation or I/O failure can leave partial output and must poison the instance; overlapping sync/async calls require deterministic rejection.
+- The repository has no performance harness. A future benchmark must separate snapshot, enumeration, event delivery, progressive/fragmented writes, and faststart finalization while recording throughput, allocated bytes, GC counts, peak memory, and sync/async stream call counts.
+- Initial no-restore test failed before compilation because stale assets referenced a Windows fallback package folder. `dotnet restore DotCore.Mp4.sln /p:RestoreFallbackFolders= /p:RestorePackagesPath=/root/.nuget/packages` passed.
+- `dotnet test DotCore.Mp4.sln --no-restore /p:RestoreFallbackFolders= /p:BuildProjectReferences=false /p:DisableFastUpToDateCheck=true --logger "console;verbosity=minimal"` passed 84 unit + 23 integration tests, 0 skipped.
+
 # 2026-07-25 Implement `add-netstandard-mp4-component`
 
 ## Acceptance criteria
