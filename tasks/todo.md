@@ -133,3 +133,26 @@
 - Console demo wrote `/tmp/dotcore-mp4-remediation-final-20260725.mp4` and printed codec configuration obtained from the reopened reader plus two video and two AAC events.
 - `ffprobe` identified H.264, AAC, and the MP4 container; `ffmpeg -v error` completed with exit 0 and no diagnostics.
 - Security/performance review confirmed bounds occur before large allocations/loops; follow-up review findings were remediated with linear `stsc` lookup, diagnostic `co64` conversion, and duplicate-track preflight.
+
+# 2026-07-25 Archive `add-netstandard-mp4-component`
+
+## Acceptance criteria
+
+- [x] All artifacts are complete and all 32 implementation tasks are checked.
+- [x] Three delta specs are synchronized to main specs without requirement or scenario drift.
+- [x] The change is moved to `openspec/changes/archive/2026-07-25-add-netstandard-mp4-component`.
+- [x] No active OpenSpec changes remain and all main specs pass strict validation.
+
+## Risk and rollback
+
+- Risk level: low; this moves completed planning artifacts and adds synchronized main specs.
+- Rollback: move the archived directory back to `openspec/changes/add-netstandard-mp4-component` and remove the three newly synchronized main specs.
+- Unrelated `.vs/` content remains untouched.
+
+## Results
+
+- Synchronized 11 requirements and 15 scenarios across `mp4-component-verification`, `mp4-stream-demuxing`, and `mp4-stream-muxing`.
+- Requirement/scenario bodies match their delta specs exactly.
+- `openspec list --json` — no active changes.
+- `openspec validate --all --strict --json` — passed, 3/3 main specs valid.
+- Archived task checklist — 32 checked, 0 unchecked.

@@ -42,3 +42,11 @@
 
 - [x] 6.1 Review public APIs for .NET Standard 2.0 compatibility, null/input validation, stream ownership, and absence of native runtime dependencies.
 - [x] 6.2 Review the final diff for minimal scope and verify all OpenSpec requirements have a corresponding passing unit or integration test.
+
+## 7. Verification warning remediation
+
+- [x] 7.1 Update the Console round-trip demonstration and smoke test to print and verify codec parameters parsed from the reopened `Mp4Reader`.
+- [x] 7.2 Add codec-specific H.264/H.265 parameter-set NAL-type validation with wrong-type regression coverage.
+- [x] 7.3 Normalize malformed AAC `esds` parsing failures to `Mp4FormatException` with diagnostic regression coverage.
+- [x] 7.4 Bound reader input, sample-table expansion, and descriptor recursion with deterministic hostile-input tests and documented limits.
+- [x] 7.5 Add direct regression coverage for AAC event data, inconsistent sample tables, H.265 multi-NAL aggregation, stream capability/ownership modes, and decreasing AAC DTS; run full interoperability verification.
