@@ -1,0 +1,123 @@
+using System;
+using System.IO;
+using System.Linq;
+using DotCore.Mp4;
+using Xunit;
+
+namespace DotCore.Mp4.Tests;
+
+public sealed class ContractTests
+{
+    [Fact]
+    public void VideoConfigurationCopiesParameterSetsAndRequiresAllH265Sets()
+    {
+        var vps = new byte[] { 0x40, 0x01 };
+        var sps = new byte[] { 0x42, 0x01 };
+        var pps = new byte[] { 0x44, 0x01 };
+        var configuration = VideoCodecConfiguration.CreateH265(vps, sps, pps);
+
+        vps[0] = 0;
+        Assert.Equal(0x40, configuration.Vps[0]);
+        Assert.Throws<ArgumentException>(() => VideoCodecConfiguration.CreateH265(Array.Empty<byte>(), sps, pps));
+        Assert.Throws<ArgumentNullException>(() => VideoCodecConfiguration.CreateH265(null!, sps, pps));
+        Assert.Throws<ArgumentNullException>(() => VideoCodecConfiguration.CreateH264(null!, pps));
+    }
+
+    [Fact]
+    public void AacConfigurationRequiresAscToMatchDeclaredParameters()
+    {
+        var configuration = new AacCodecConfiguration(new byte[] { 0x12, 0x10 }, 44100, 2);
+        Assert.Equal(2, configuration.AudioObjectType);
+        Assert.Equal(44100, configuration.SampleRate);
+        Assert.Equal(2, configuration.ChannelConfiguration);
+        Assert.Throws<ArgumentException>(() => new AacCodecConfiguration(new byte[] { 0x12, 0x10 }, 48000, 2));
+        Assert.Throws<ArgumentException>(() => AacCodecConfiguration.FromAudioSpecificConfig(new byte[] { 0x00, 0x00 }));
+    }
+
+    [Fact]
+    public void UnsupportedOutputStreamIsRejectedBeforeAnyHeader()
+    {
+        using var stream = new NonSeekableWriteStream();
+        Assert.Throws<InvalidOperationException>(() => new Mp4Writer(stream));
+        Assert.Empty(stream.Bytes);
+    }
+
+    [Fact]
+    public void TimestampConversionRejectsInexactScaleAndPreservesExactScale()
+    {
+        Assert.Equal(90L, MediaTime.ToTicks(TimeSpan.FromMilliseconds(1), 90000));
+        Assert.Throws<Mp4TimestampException>(() => MediaTime.ToTicks(TimeSpan.FromTicks(1), 90000));
+        Assert.Equal(TimeSpan.FromMilliseconds(1), MediaTime.FromTicks(90, 90000));
+    }
+
+    [Fact]
+    public void WriterRejectsDecreasingDecodeTimestamp()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new Mp4Writer(stream);
+        writer.SetVideoCodecConfiguration(TestMedia.H264Configuration);
+        writer.WriteVideoNalUnit(TestMedia.Video(new byte[] { 0x65, 0x01 }, TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(1)));
+        Assert.Throws<Mp4TimestampException>(() => writer.WriteVideoNalUnit(
+            TestMedia.Video(new byte[] { 0x41, 0x02 }, TimeSpan.Zero, TimeSpan.Zero)));
+    }
+
+    [Fact]
+    public void WriterDoesNotCloseCallerOwnedStream()
+    {
+        var stream = new TrackingMemoryStream();
+        using (var writer = new Mp4Writer(stream))
+        {
+            writer.SetAudioCodecConfiguration(TestMedia.AacConfiguration);
+            writer.WriteAudioSample(TestMedia.Audio(new byte[] { 0x21, 0x10 }, TimeSpan.Zero));
+            writer.FinalizeFile();
+        }
+
+        Assert.False(stream.Closed);
+        Assert.True(stream.Length > 0);
+    }
+
+    private sealed class NonSeekableWriteStream : Stream
+    {
+        private readonly MemoryStream _inner = new MemoryStream();
+        public byte[] Bytes => _inner.ToArray();
+        public override bool CanRead => false;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => _inner.Length;
+        public override long Position { get => _inner.Position; set => _inner.Position = value; }
+        public override void Flush() => _inner.Flush();
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => _inner.SetLength(value);
+        public override void Write(byte[] buffer, int offset, int count) => _inner.Write(buffer, offset, count);
+    }
+
+    private sealed class TrackingMemoryStream : MemoryStream
+    {
+        public bool Closed { get; private set; }
+        protected override void Dispose(bool disposing)
+        {
+            Closed = true;
+            base.Dispose(disposing);
+        }
+    }
+}
+
+internal static class TestMedia
+{
+    public static readonly VideoCodecConfiguration H264Configuration =
+        VideoCodecConfiguration.CreateH264(new byte[] { 0x67, 0x42, 0x00, 0x1e }, new byte[] { 0x68, 0xce, 0x06, 0xe2 }, 4, 16, 16);
+
+    public static readonly AacCodecConfiguration AacConfiguration =
+        new AacCodecConfiguration(new byte[] { 0x12, 0x10 }, 44100, 2);
+
+    public static EncodedVideoNalUnit Video(byte[] data, TimeSpan pts, TimeSpan dts, bool isKeyFrame = true)
+    {
+        return new EncodedVideoNalUnit(data, pts, dts, TimeSpan.FromMilliseconds(40), isKeyFrame);
+    }
+
+    public static EncodedAudioSample Audio(byte[] data, TimeSpan pts)
+    {
+        return new EncodedAudioSample(data, pts, pts, TimeSpan.FromMilliseconds(20));
+    }
+}
