@@ -156,3 +156,38 @@
 - `openspec list --json` — no active changes.
 - `openspec validate --all --strict --json` — passed, 3/3 main specs valid.
 - Archived task checklist — 32 checked, 0 unchecked.
+
+# 2026-07-25 Propose `add-faststart-fragmented-mp4`
+
+## Acceptance criteria
+
+- [x] Proposal preserves default progressive behavior and scopes faststart plus keyframe-aligned fragmented writer output.
+- [x] Design includes `Mp4Reader` fragmented demuxing, Console three-mode round-trip, stream/resource contracts, compatibility, risk, and rollback decisions.
+- [x] Delta specs modify muxing, demuxing, and component verification with testable scenarios.
+- [x] Tasks are tests-first, independently trackable, and include real test discovery, FFmpeg interoperability, Console, documentation, and final verification.
+- [x] OpenSpec reports all apply-required artifacts complete and strict validation passes.
+
+## Risk and rollback
+
+- Risk level: low; this change creates planning artifacts only and does not modify production behavior.
+- Affected components for later implementation: writer/reader public contracts and internals, Console, unit/integration tests, fixtures, README, and main specs.
+- Rollback: remove `openspec/changes/add-faststart-fragmented-mp4` and this planning note; no runtime or persistent data state is affected.
+
+## Dependencies and environment
+
+- Planning schema: repo-local `spec-driven`.
+- Future implementation retains `netstandard2.0` for the library and .NET 10 for tests/Console.
+- `ffprobe` and `ffmpeg` remain integration-test prerequisites, not production dependencies.
+
+## Working notes
+
+- Default constructor remains progressive; faststart and fragmented are explicit opt-in modes.
+- Fragmented writer requires video, starts fragments at keyframes, bounds one-GOP buffering, and requires cross-track DTS order.
+- `Mp4Reader` parses completed snapshots of progressive, faststart, and fragmented files; live tail-follow remains out of scope.
+- Console preserves `<output-path>` and adds optional `[progressive|faststart|fragmented]`.
+
+## Results
+
+- Created proposal, design, three delta specs, and a 45-item tests-first task checklist.
+- `openspec status --change add-faststart-fragmented-mp4` — 4/4 artifacts complete and apply-ready.
+- `openspec validate add-faststart-fragmented-mp4 --strict --json` — passed, 1/1 change valid.
