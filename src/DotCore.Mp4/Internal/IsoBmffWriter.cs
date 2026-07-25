@@ -104,6 +104,14 @@ internal sealed class IsoBmffWriter
         _stream.Write(value, 0, value.Length);
     }
 
+    public void WriteBytes(byte[] value, int offset, int count)
+    {
+        if (value == null) throw new ArgumentNullException(nameof(value));
+        if (offset < 0 || offset > value.Length) throw new ArgumentOutOfRangeException(nameof(offset));
+        if (count < 0 || count > value.Length - offset) throw new ArgumentOutOfRangeException(nameof(count));
+        _stream.Write(value, offset, count);
+    }
+
     public void WriteZeros(int count)
     {
         if (count < 0) throw new ArgumentOutOfRangeException(nameof(count));

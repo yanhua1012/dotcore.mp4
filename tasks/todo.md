@@ -486,3 +486,51 @@
 - Final unit tests passed 84/84; integration tests passed 23/23; solution discovery passed 107/107; all had 0 failed and 0 skipped.
 - Explicit H.264/H.265 × progressive/faststart/fragmented Console matrix emitted 3 video and 4 AAC events per file; `ffprobe` identified H.264/HEVC plus AAC and `ffmpeg -v error` produced zero diagnostic bytes for all six files.
 - OpenSpec strict validation and both staged/unstaged diff checks passed; remediation tasks are 51/51 complete.
+
+# 2026-07-26 Implement `reduce-mp4-byte-copies`
+
+## Acceptance criteria
+
+- [ ] A reproducible .NET 10 benchmark harness captures provenance, allocations, GC, throughput, Stream calls, fixed API/package baselines, and byte-identical MP4 outputs.
+- [ ] Reader delivery creates at most one internal owned payload array before caller-visible defensive copies while preserving all public entry points and lifetime semantics.
+- [ ] Writer normalization and fragmented buffering use validated ranges/payload sources without duplicate payload materialization and preserve rejection/failure state.
+- [ ] Fragment metadata is built once and patched in-place with checked offsets while preserving exact output bytes.
+- [ ] Candidate medians meet the 35% allocation and 10% throughput gates, and full compatibility/interoperability verification passes.
+
+## Checkpoints
+
+- [x] A — establish fixtures, API/output baselines, benchmark harness, comparator, and three pre-change Release runs.
+- [x] B — add red Reader ownership tests, implement the internal transfer path, and make targeted Reader suites green.
+- [x] C — add red Writer range/fragment tests, implement NAL ranges and fragment payload sources, and make targeted suites green.
+- [x] D — add red `moof` tests, implement single-build backpatching, and make fragmented Reader/Writer suites green.
+- [ ] E — run candidate benchmarks, compatibility/interoperability/full verification, reviews, documentation, and machine counts.
+
+## Risk and rollback
+
+- Risk level: medium; internal ownership, buffering, and fragment metadata construction change while public contracts and bytes must remain stable.
+- Affected components: Reader sample construction, Writer NAL normalization, fragment buffering/flush, BMFF metadata buffers, benchmarks, tests, solution, and README.
+- Rollback: revert each independent Reader, NAL-range, fragment-payload, or single-build `moof` slice together with its tests; no persistent data migration or public API migration is involved.
+- Rollout signals: allocation/throughput comparator, API/package comparison, fixed-output SHA-256, Reader round-trip, Stream-call diagnostics, full tests, and FFmpeg validation.
+
+## Dependencies and environment
+
+- .NET SDK 10; production remains dependency-free `netstandard2.0`.
+- Benchmark-only packages must remain isolated under `benchmarks/DotCore.Mp4.Benchmarks`.
+- Mounted-checkout restore uses `/p:RestoreFallbackFolders=` and `/p:RestorePackagesPath=/root/.nuget/packages`; dotnet restore/build/test commands remain serialized.
+- `ffprobe` and `ffmpeg` must resolve from `PATH` for final interoperability checks.
+
+## Working notes
+
+- OpenSpec schema is repo-local `spec-driven`; source of truth is `openspec/changes/reduce-mp4-byte-copies`.
+- Baseline must be captured before production copy-path edits and use at least three independent Release processes.
+- Public constructors and `Data` properties retain defensive-copy behavior; internal factories/ranges must never accept mutable caller-owned arrays.
+- Required acceptance uses full scenario identity; fixture setup and output-buffer growth are outside measured operations or separately reported.
+
+## Results
+
+- Review: correctness, security/privacy, performance/complexity, and scope review found no pool lifetime, mutable alias, unbounded retention, payload logging, async I/O, or public borrowed-memory API scope creep. Internal ranges reference already-owned sample buffers; fragment payload sources retain references until successful flush; `moof` uses one checked patchable buffer; public `Data` and configuration accessors remain defensive copies.
+- Benchmark evidence: `artifacts/benchmarks/comparison.json` passed with 5 baseline and 5 candidate runs, 37 scenarios, 101 operations per run, matching scenario identities, and no comparator errors. Required Reader delivery allocation reductions were approximately 49.96%-50.03%; required progressive/faststart ingestion reductions were approximately 99.60%-99.74%; required fragmented flush reductions were approximately 98.97%-99.55%. Faststart finalization remained within the throughput gate (-7.03% H.264, -6.32% H.265). All required throughput medians passed the 10% regression gate.
+- `dotnet run -c Release --project benchmarks/DotCore.Mp4.Benchmarks --no-restore -- self-test` — passed; `baseline` compatibility and fixed-output checks — passed. Benchmark provenance records commit, dirty state, command, runtime/environment, result path/hash, allocation, GC, throughput, and Stream-call fields; generated artifacts remain ignored under `artifacts/`.
+- `dotnet restore DotCore.Mp4.sln /p:RestoreFallbackFolders= /p:RestorePackagesPath=/root/.nuget/packages` — passed. `dotnet build DotCore.Mp4.sln --no-restore /p:BuildProjectReferences=false /p:DisableFastUpToDateCheck=true` — passed, 0 warnings, 0 errors. Unit tests — 123/123 passed; integration tests — 23/23 passed; solution-level discovery — 146/146 passed, 0 skipped.
+- `openspec validate reduce-mp4-byte-copies --strict --json` — passed 1/1. `git diff --check` and `git diff --cached --check` — passed. Machine counts: 4/4 artifact kinds complete, 3 delta spec files, 7 requirements, 28 scenarios, 51/51 tasks checked, 0 unchecked.
+- Risk/rollback: medium implementation risk is limited to internal ownership, range buffering, and fragment metadata construction. Rollback is a revert of the corresponding internal slice and tests; no schema, persistent data, public API, or consumer migration is required.

@@ -55,6 +55,42 @@ reader.AacSampleRead += (_, sample) => Console.WriteLine(sample.Data.Length);
 reader.Read();
 ```
 
+## Allocation 與 throughput benchmark
+
+`benchmarks/DotCore.Mp4.Benchmarks` 是獨立的 .NET 10 executable；`BenchmarkDotNet` 僅由這個 project 引用，不會傳遞至 production library。Harness 使用固定 deterministic fixtures 分開量測：
+
+- Reader constructor snapshot、no-event delivery、event delivery，以及 caller 明確讀取 `Data`。
+- H.264/H.265 raw/Annex-B、single/multi/tiny NAL 的 progressive/faststart ingestion。
+- H.264/H.265 fragmented short/long GOP flush，以及 faststart finalization。
+- 每個 scenario 的 logical payload/sample/NAL/GOP identity、managed allocation、GC、throughput、同步 Stream calls、commit/dirty state、command、runtime/environment 與 result path/hash。
+
+Tracked `Baselines/compatibility.json` 鎖定 public API、`netstandard2.0` target 與 production 顯式 package 集合；`Baselines/fixed-outputs.json` 鎖定 H.264/H.265 × 三種 layout 的 SHA-256、top-level box/payload 摘要及 public Reader round-trip。以下命令若 public contract、dependency 或 fixed bytes drift 會非零退出：
+
+```bash
+dotnet run -c Release --project benchmarks/DotCore.Mp4.Benchmarks -- baseline
+dotnet run -c Release --project benchmarks/DotCore.Mp4.Benchmarks -- self-test
+```
+
+正式比較需在相同環境、相同 Release harness 下各執行至少三個獨立 process。Fixture setup與預先配置 output buffer不計入 measured operation；目前 acceptance 使用每 process 101 operations 的 median：
+
+```bash
+dotnet run -c Release --project benchmarks/DotCore.Mp4.Benchmarks --no-build -- capture --output artifacts/benchmarks/baseline-run-1.json --operations 101
+dotnet run -c Release --project benchmarks/DotCore.Mp4.Benchmarks --no-build -- capture --output artifacts/benchmarks/candidate-run-1.json --operations 101
+
+dotnet run -c Release --project benchmarks/DotCore.Mp4.Benchmarks --no-build -- compare \
+  --baseline artifacts/benchmarks/baseline-run-1.json \
+  --baseline artifacts/benchmarks/baseline-run-2.json \
+  --baseline artifacts/benchmarks/baseline-run-3.json \
+  --candidate artifacts/benchmarks/candidate-run-1.json \
+  --candidate artifacts/benchmarks/candidate-run-2.json \
+  --candidate artifacts/benchmarks/candidate-run-3.json \
+  --output artifacts/benchmarks/comparison.json
+```
+
+Comparator 要求所有 scenario identity/parameters完全相同。至少 1 MiB 的 Reader delivery、progressive/faststart ingestion與fragment flush，managed allocation median 必須降低至少 35%；所有 required IDs 的 throughput median不得退化超過 10%。`artifacts/` 不進版控，保留完整 JSON 與 SHA-256 作為本機/CI evidence。
+
+這個 benchmark 不代表 async I/O、streaming Reader、public borrowed-memory API 或 faststart layout redesign；這些都不在目前 copy-reduction scope。Stream call count是 bounded-write診斷，不能取代 throughput gate。
+
 ## Build、測試與互通性驗證
 
 需要 .NET SDK 10，以及 PATH 中的 `ffprobe` 和 `ffmpeg` 才能執行外部工具驗證。mounted checkout 若帶有錯誤的 Visual Studio fallback path，使用空的 `RestoreFallbackFolders`：

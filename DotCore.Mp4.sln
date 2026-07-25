@@ -10,6 +10,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DotCore.Mp4.IntegrationTest
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DotCore.Mp4.Console", "samples\DotCore.Mp4.Console\DotCore.Mp4.Console.csproj", "{C5579E7B-CB1C-46BA-9DB0-3E6B8C289C5B}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DotCore.Mp4.Benchmarks", "benchmarks\DotCore.Mp4.Benchmarks\DotCore.Mp4.Benchmarks.csproj", "{3A3AA461-3D1F-4746-BD6D-FAD02B27DF84}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -32,6 +34,10 @@ Global
 		{C5579E7B-CB1C-46BA-9DB0-3E6B8C289C5B}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{C5579E7B-CB1C-46BA-9DB0-3E6B8C289C5B}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{C5579E7B-CB1C-46BA-9DB0-3E6B8C289C5B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3A3AA461-3D1F-4746-BD6D-FAD02B27DF84}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3A3AA461-3D1F-4746-BD6D-FAD02B27DF84}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3A3AA461-3D1F-4746-BD6D-FAD02B27DF84}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3A3AA461-3D1F-4746-BD6D-FAD02B27DF84}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

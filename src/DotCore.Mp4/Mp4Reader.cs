@@ -1212,7 +1212,7 @@ public sealed class Mp4Reader : IDisposable
 
     private static EncodedVideoNalUnit CreateVideoSample(ParsedSample sample, byte[] nal, ParsedTrack track)
     {
-        return new EncodedVideoNalUnit(
+        return EncodedVideoNalUnit.FromOwnedData(
             nal,
             MediaTime.FromTicksRounded(sample.Pts, track.Timescale),
             MediaTime.FromTicksRounded(sample.Dts, track.Timescale),
@@ -1222,7 +1222,7 @@ public sealed class Mp4Reader : IDisposable
 
     private static EncodedAudioSample CreateAudioSample(ParsedSample sample, ParsedTrack track)
     {
-        return new EncodedAudioSample(
+        return EncodedAudioSample.FromOwnedData(
             Slice(track.Data, sample.Offset, checked((int)sample.Size)),
             MediaTime.FromTicksRounded(sample.Pts, track.Timescale),
             MediaTime.FromTicksRounded(sample.Dts, track.Timescale),

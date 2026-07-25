@@ -177,7 +177,7 @@ public sealed class VideoCodecConfiguration
         int expectedType,
         string displayName)
     {
-        System.Collections.Generic.IList<byte[]> units;
+        System.Collections.Generic.IList<NalUnitRange> units;
         try
         {
             units = NalUnits.Normalize(value);
@@ -187,7 +187,7 @@ public sealed class VideoCodecConfiguration
             throw new ArgumentException("The " + displayName + " is not a valid NAL unit.", parameterName, ex);
         }
 
-        if (units.Count != 1 || units[0].Length < (codec == VideoCodec.H265 ? 2 : 1))
+        if (units.Count != 1 || units[0].Count < (codec == VideoCodec.H265 ? 2 : 1))
         {
             throw new ArgumentException(
                 "The " + displayName + " must contain exactly one complete NAL unit.",
@@ -195,8 +195,8 @@ public sealed class VideoCodecConfiguration
         }
 
         var actualType = codec == VideoCodec.H264
-            ? units[0][0] & 0x1f
-            : (units[0][0] >> 1) & 0x3f;
+            ? units[0].BackingArray[units[0].Offset] & 0x1f
+            : (units[0].BackingArray[units[0].Offset] >> 1) & 0x3f;
         if (actualType != expectedType)
         {
             throw new ArgumentException(
@@ -303,6 +303,37 @@ public sealed class EncodedVideoNalUnit
         TimeSpan duration,
         bool isKeyFrame)
     {
+        Validate(data, presentationTimestamp, decodeTimestamp, duration);
+        _data = Copy(data);
+        PresentationTimestamp = presentationTimestamp;
+        DecodeTimestamp = decodeTimestamp;
+        Duration = duration;
+        IsKeyFrame = isKeyFrame;
+    }
+
+    private EncodedVideoNalUnit(
+        byte[] data,
+        TimeSpan presentationTimestamp,
+        TimeSpan decodeTimestamp,
+        TimeSpan duration,
+        bool isKeyFrame,
+        OwnedData ownership)
+    {
+        _ = ownership;
+        Validate(data, presentationTimestamp, decodeTimestamp, duration);
+        _data = data;
+        PresentationTimestamp = presentationTimestamp;
+        DecodeTimestamp = decodeTimestamp;
+        Duration = duration;
+        IsKeyFrame = isKeyFrame;
+    }
+
+    private static void Validate(
+        byte[] data,
+        TimeSpan presentationTimestamp,
+        TimeSpan decodeTimestamp,
+        TimeSpan duration)
+    {
         if (data == null)
         {
             throw new ArgumentNullException(nameof(data));
@@ -327,12 +358,6 @@ public sealed class EncodedVideoNalUnit
         {
             throw new ArgumentOutOfRangeException(nameof(duration));
         }
-
-        _data = Copy(data);
-        PresentationTimestamp = presentationTimestamp;
-        DecodeTimestamp = decodeTimestamp;
-        Duration = duration;
-        IsKeyFrame = isKeyFrame;
     }
 
     public byte[] Data => Copy(_data);
@@ -345,11 +370,32 @@ public sealed class EncodedVideoNalUnit
 
     internal byte[] DataBytes => _data;
 
+    internal static EncodedVideoNalUnit FromOwnedData(
+        byte[] data,
+        TimeSpan presentationTimestamp,
+        TimeSpan decodeTimestamp,
+        TimeSpan duration,
+        bool isKeyFrame)
+    {
+        return new EncodedVideoNalUnit(
+            data,
+            presentationTimestamp,
+            decodeTimestamp,
+            duration,
+            isKeyFrame,
+            OwnedData.Value);
+    }
+
     private static byte[] Copy(byte[] value)
     {
         var copy = new byte[value.Length];
         Buffer.BlockCopy(value, 0, copy, 0, value.Length);
         return copy;
+    }
+
+    private enum OwnedData
+    {
+        Value
     }
 }
 
@@ -359,6 +405,34 @@ public sealed class EncodedAudioSample
     private readonly byte[] _data;
 
     public EncodedAudioSample(
+        byte[] data,
+        TimeSpan presentationTimestamp,
+        TimeSpan decodeTimestamp,
+        TimeSpan duration)
+    {
+        Validate(data, presentationTimestamp, decodeTimestamp, duration);
+        _data = Copy(data);
+        PresentationTimestamp = presentationTimestamp;
+        DecodeTimestamp = decodeTimestamp;
+        Duration = duration;
+    }
+
+    private EncodedAudioSample(
+        byte[] data,
+        TimeSpan presentationTimestamp,
+        TimeSpan decodeTimestamp,
+        TimeSpan duration,
+        OwnedData ownership)
+    {
+        _ = ownership;
+        Validate(data, presentationTimestamp, decodeTimestamp, duration);
+        _data = data;
+        PresentationTimestamp = presentationTimestamp;
+        DecodeTimestamp = decodeTimestamp;
+        Duration = duration;
+    }
+
+    private static void Validate(
         byte[] data,
         TimeSpan presentationTimestamp,
         TimeSpan decodeTimestamp,
@@ -388,11 +462,6 @@ public sealed class EncodedAudioSample
         {
             throw new ArgumentOutOfRangeException(nameof(duration));
         }
-
-        _data = Copy(data);
-        PresentationTimestamp = presentationTimestamp;
-        DecodeTimestamp = decodeTimestamp;
-        Duration = duration;
     }
 
     public byte[] Data => Copy(_data);
@@ -404,11 +473,30 @@ public sealed class EncodedAudioSample
 
     internal byte[] DataBytes => _data;
 
+    internal static EncodedAudioSample FromOwnedData(
+        byte[] data,
+        TimeSpan presentationTimestamp,
+        TimeSpan decodeTimestamp,
+        TimeSpan duration)
+    {
+        return new EncodedAudioSample(
+            data,
+            presentationTimestamp,
+            decodeTimestamp,
+            duration,
+            OwnedData.Value);
+    }
+
     private static byte[] Copy(byte[] value)
     {
         var copy = new byte[value.Length];
         Buffer.BlockCopy(value, 0, copy, 0, value.Length);
         return copy;
+    }
+
+    private enum OwnedData
+    {
+        Value
     }
 }
 

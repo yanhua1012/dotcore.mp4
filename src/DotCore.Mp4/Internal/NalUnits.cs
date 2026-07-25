@@ -5,17 +5,17 @@ namespace DotCore.Mp4;
 
 internal static class NalUnits
 {
-    public static IList<byte[]> Normalize(byte[] data)
+    public static IList<NalUnitRange> Normalize(byte[] data)
     {
         if (data == null) throw new ArgumentNullException(nameof(data));
 
         int firstLength;
         if (!TryFindStartCode(data, 0, out firstLength))
         {
-            return new List<byte[]> { Copy(data) };
+            return new List<NalUnitRange> { new NalUnitRange(data, 0, data.Length) };
         }
 
-        var result = new List<byte[]>();
+        var result = new List<NalUnitRange>();
         var start = firstLength;
         while (start <= data.Length)
         {
@@ -27,9 +27,7 @@ internal static class NalUnits
                 throw new Mp4FormatException("An Annex-B video sample contains an empty NAL unit.");
             }
 
-            var nal = new byte[end - start];
-            Buffer.BlockCopy(data, start, nal, 0, nal.Length);
-            result.Add(nal);
+            result.Add(new NalUnitRange(data, start, end - start));
             if (next < 0) break;
             start = next + nextLength;
         }
@@ -73,10 +71,36 @@ internal static class NalUnits
         return FindStartCode(data, from, out codeLength) == from;
     }
 
-    private static byte[] Copy(byte[] data)
+}
+
+internal readonly struct NalUnitRange
+{
+    public NalUnitRange(byte[] backingArray, int offset, int count)
     {
-        var copy = new byte[data.Length];
-        Buffer.BlockCopy(data, 0, copy, 0, data.Length);
-        return copy;
+        BackingArray = backingArray ?? throw new ArgumentNullException(nameof(backingArray));
+        if (offset < 0 || offset > backingArray.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(offset));
+        }
+
+        if (count < 0 || count > backingArray.Length - offset)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count));
+        }
+
+        Offset = offset;
+        Count = count;
+    }
+
+    public byte[] BackingArray { get; }
+    public int Offset { get; }
+    public int Count { get; }
+    public int Length => Count;
+
+    public byte[] ToArray()
+    {
+        var result = new byte[Count];
+        Buffer.BlockCopy(BackingArray, Offset, result, 0, Count);
+        return result;
     }
 }

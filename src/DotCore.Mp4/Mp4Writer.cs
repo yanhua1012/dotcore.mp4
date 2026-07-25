@@ -178,6 +178,7 @@ public sealed class Mp4Writer : IDisposable
         var duration = MediaTime.ToTicks(sample.Duration, MediaTime.DefaultTrackTimescale);
         ValidateTimedSample(dts, duration, _lastVideoDts, "video");
         var nalUnits = NalUnits.Normalize(sample.DataBytes);
+        ValidateNalLengths(nalUnits, _videoConfiguration.NalLengthSize);
         if (_mode == Mp4WriteMode.Fragmented)
         {
             WriteFragmentedVideoNalUnits(sample, nalUnits, pts, dts, duration);
@@ -228,7 +229,13 @@ public sealed class Mp4Writer : IDisposable
             var data = sample.DataBytes;
             EnsureFragmentBufferCapacity(data.Length);
             EnsureFragmentedStarted();
-            _fragmentSamples.Add(new FragmentSample(false, data, pts, dts, duration, true));
+            _fragmentSamples.Add(new FragmentSample(
+                false,
+                FragmentPayloadSource.FromAudio(data),
+                pts,
+                dts,
+                duration,
+                true));
             _fragmentBufferedBytes = checked(_fragmentBufferedBytes + data.Length);
             _lastAudioDts = dts;
             _lastGlobalDts = dts;
@@ -328,8 +335,8 @@ public sealed class Mp4Writer : IDisposable
             }
 
             WriteNalLength(writer, nal.Length, _videoConfiguration.NalLengthSize);
-            writer.WriteBytes(nal);
-            size = checked(size + _videoConfiguration.NalLengthSize + nal.Length);
+            writer.WriteBytes(nal.BackingArray, nal.Offset, nal.Count);
+            size = checked(size + _videoConfiguration.NalLengthSize + nal.Count);
         }
 
         if (size == 0 || size > uint.MaxValue)
@@ -349,7 +356,7 @@ public sealed class Mp4Writer : IDisposable
 
     private void WriteFragmentedVideoNalUnits(
         EncodedVideoNalUnit sample,
-        IList<byte[]> nalUnits,
+        IList<NalUnitRange> nalUnits,
         long pts,
         long dts,
         long duration)
@@ -424,21 +431,28 @@ public sealed class Mp4Writer : IDisposable
         }
     }
 
-    private static int GetEncodedVideoSize(IList<byte[]> nalUnits, int nalLengthSize)
+    private static int GetEncodedVideoSize(IList<NalUnitRange> nalUnits, int nalLengthSize)
     {
+        ValidateNalLengths(nalUnits, nalLengthSize);
         var size = 0;
         foreach (var nal in nalUnits)
         {
-            if (nal.Length > MaxLengthForNal(nalLengthSize))
-            {
-                throw new Mp4FormatException("A video NAL unit does not fit in the configured MP4 length field.");
-            }
-
             size = checked(size + nalLengthSize + nal.Length);
         }
 
         if (size == 0) throw new Mp4FormatException("A video access unit must not be empty.");
         return size;
+    }
+
+    private static void ValidateNalLengths(IList<NalUnitRange> nalUnits, int nalLengthSize)
+    {
+        foreach (var nal in nalUnits)
+        {
+            if (nal.Count > MaxLengthForNal(nalLengthSize))
+            {
+                throw new Mp4FormatException("A video NAL unit does not fit in the configured MP4 length field.");
+            }
+        }
     }
 
     private void CommitPendingFragmentedVideo()
@@ -449,17 +463,15 @@ public sealed class Mp4Writer : IDisposable
             throw new InvalidOperationException("Video configuration is missing.");
         }
 
-        var payload = BuildBytes(writer =>
-        {
-            foreach (var nal in _pendingVideo.Nals)
-            {
-                WriteNalLength(writer, nal.Length, _videoConfiguration.NalLengthSize);
-                writer.WriteBytes(nal);
-            }
-        });
+        var encodedSize = GetEncodedVideoSize(
+            _pendingVideo.Nals,
+            _videoConfiguration.NalLengthSize);
         _fragmentSamples.Add(new FragmentSample(
             true,
-            payload,
+            FragmentPayloadSource.FromVideo(
+                _pendingVideo.Nals,
+                _videoConfiguration.NalLengthSize,
+                encodedSize),
             _pendingVideo.Pts,
             _pendingVideo.Dts,
             _pendingVideo.Duration,
@@ -581,61 +593,102 @@ public sealed class Mp4Writer : IDisposable
 
         var video = selected.Where(sample => sample.Video).ToList();
         var audio = selected.Where(sample => !sample.Video).ToList();
-        var provisional = BuildMovieFragment(video, audio, 0, 0);
-        var videoDataOffset = checked(provisional.Length + 8);
-        var videoPayloadBytes = video.Sum(sample => sample.Payload.Length);
-        var audioDataOffset = checked(videoDataOffset + videoPayloadBytes);
-        var moof = BuildMovieFragment(video, audio, videoDataOffset, audioDataOffset);
-        if (moof.Length != provisional.Length)
+        var videoPayloadBytes = video.Sum(sample => (long)sample.EncodedSize);
+        var audioPayloadBytes = audio.Sum(sample => (long)sample.EncodedSize);
+        var payloadBytes = checked(videoPayloadBytes + audioPayloadBytes);
+        var mdatSize = checked(payloadBytes + 8);
+        if (mdatSize > uint.MaxValue)
         {
-            throw new Mp4FormatException("Fragment metadata length changed while resolving trun data offsets.");
+            throw new Mp4FormatException("A fragment mdat box exceeds the 32-bit box-size limit.");
         }
 
-        _output.Write(moof, 0, moof.Length);
-        var payloadBytes = checked(videoPayloadBytes + audio.Sum(sample => sample.Payload.Length));
-        var mdatSize = checked(payloadBytes + 8);
+        uint nextSequenceNumber;
+        try
+        {
+            nextSequenceNumber = checked(_fragmentSequenceNumber + 1);
+        }
+        catch (OverflowException error)
+        {
+            throw new Mp4FormatException("The fragment sequence number exceeds the supported range.", error);
+        }
+
+        var moof = BuildMovieFragment(video, audio, videoPayloadBytes);
+
+        _output.Write(moof.Buffer, 0, moof.Count);
         var outputWriter = new IsoBmffWriter(_output);
         outputWriter.WriteUInt32((uint)mdatSize);
         outputWriter.WriteFourCc("mdat");
-        foreach (var sample in video) _output.Write(sample.Payload, 0, sample.Payload.Length);
-        foreach (var sample in audio) _output.Write(sample.Payload, 0, sample.Payload.Length);
+        foreach (var sample in video) WriteFragmentPayload(sample);
+        foreach (var sample in audio) WriteFragmentPayload(sample);
 
         foreach (var sample in selected)
         {
             _fragmentSamples.Remove(sample);
-            _fragmentBufferedBytes = checked(_fragmentBufferedBytes - sample.Payload.Length);
+            _fragmentBufferedBytes = checked(_fragmentBufferedBytes - sample.EncodedSize);
         }
 
         _fragmentedHasVideoSample = _fragmentSamples.Any(sample => sample.Video);
-        _fragmentSequenceNumber = checked(_fragmentSequenceNumber + 1);
+        _fragmentSequenceNumber = nextSequenceNumber;
     }
 
-    private byte[] BuildMovieFragment(
+    private BufferSegment BuildMovieFragment(
         IList<FragmentSample> video,
         IList<FragmentSample> audio,
-        int videoDataOffset,
-        int audioDataOffset)
+        long videoPayloadBytes)
     {
-        using (var stream = new MemoryStream())
+        var trackCount = (video.Count == 0 ? 0 : 1) + (audio.Count == 0 ? 0 : 1);
+        int capacity;
+        try
+        {
+            capacity = checked(128 + ((video.Count + audio.Count) * 20) + (trackCount * 80));
+        }
+        catch (OverflowException error)
+        {
+            throw new Mp4FormatException("Fragment metadata capacity exceeds the supported range.", error);
+        }
+
+        using (var stream = new MemoryStream(capacity))
         {
             var writer = new IsoBmffWriter(stream);
+            var dataOffsetPatchPositions = new List<long>(trackCount);
             var moof = writer.BeginBox("moof");
             var mfhd = writer.BeginBox("mfhd");
             WriteFullBoxHeader(writer, 0, 0);
             writer.WriteUInt32(_fragmentSequenceNumber);
             writer.EndBox(mfhd);
-            if (video.Count != 0) WriteTrackFragment(writer, 1, video, videoDataOffset);
-            if (audio.Count != 0) WriteTrackFragment(writer, 2, audio, audioDataOffset);
+            if (video.Count != 0) dataOffsetPatchPositions.Add(WriteTrackFragment(writer, 1, video));
+            if (audio.Count != 0) dataOffsetPatchPositions.Add(WriteTrackFragment(writer, 2, audio));
             writer.EndBox(moof);
-            return stream.ToArray();
+            var length = checked((int)stream.Length);
+            var videoDataOffset = checked((long)length + 8);
+            var audioDataOffset = checked(videoDataOffset + videoPayloadBytes);
+            var patchIndex = 0;
+            if (video.Count != 0)
+            {
+                BigEndianPatch.PatchInt32(
+                    stream.GetBuffer(),
+                    length,
+                    dataOffsetPatchPositions[patchIndex++],
+                    videoDataOffset);
+            }
+
+            if (audio.Count != 0)
+            {
+                BigEndianPatch.PatchInt32(
+                    stream.GetBuffer(),
+                    length,
+                    dataOffsetPatchPositions[patchIndex],
+                    audioDataOffset);
+            }
+
+            return new BufferSegment(stream.GetBuffer(), length);
         }
     }
 
-    private static void WriteTrackFragment(
+    private static long WriteTrackFragment(
         IsoBmffWriter writer,
         int trackId,
-        IList<FragmentSample> samples,
-        int dataOffset)
+        IList<FragmentSample> samples)
     {
         var traf = writer.BeginBox("traf");
         var tfhd = writer.BeginBox("tfhd");
@@ -651,12 +704,13 @@ public sealed class Mp4Writer : IDisposable
         var trun = writer.BeginBox("trun");
         WriteFullBoxHeader(writer, signedCompositionOffsets ? (byte)1 : (byte)0, 0x000f01);
         writer.WriteUInt32((uint)samples.Count);
-        writer.WriteInt32(dataOffset);
+        var dataOffsetPatchPosition = writer.Position;
+        writer.WriteInt32(0);
         foreach (var sample in samples)
         {
             if (sample.Duration > uint.MaxValue) throw new Mp4FormatException("A fragment sample duration exceeds the trun range.");
             writer.WriteUInt32((uint)sample.Duration);
-            writer.WriteUInt32((uint)sample.Payload.Length);
+            writer.WriteUInt32((uint)sample.EncodedSize);
             writer.WriteUInt32(sample.Video
                 ? sample.IsKeyFrame ? 0x02000000U : 0x01010000U
                 : 0x02000000U);
@@ -683,6 +737,26 @@ public sealed class Mp4Writer : IDisposable
 
         writer.EndBox(trun);
         writer.EndBox(traf);
+        return dataOffsetPatchPosition;
+    }
+
+    private void WriteFragmentPayload(FragmentSample sample)
+    {
+        var source = sample.PayloadSource;
+        if (source.ContiguousData != null)
+        {
+            _output.Write(source.ContiguousData, 0, source.ContiguousData.Length);
+            return;
+        }
+
+        var ranges = source.Ranges ??
+                     throw new InvalidOperationException("A fragment payload source has no data.");
+        var writer = new IsoBmffWriter(_output);
+        foreach (var range in ranges)
+        {
+            WriteNalLength(writer, range.Count, source.NalLengthSize);
+            writer.WriteBytes(range.BackingArray, range.Offset, range.Count);
+        }
     }
 
     private void RelocateMdatForFastStart(long endOfMdat, byte[] moov)
@@ -1198,13 +1272,13 @@ public sealed class Mp4Writer : IDisposable
     private static byte[] SingleParameterSet(byte[] value, string name)
     {
         var sets = NalUnits.Normalize(value);
-        if (sets.Count != 1 || sets[0].Length == 0)
+        if (sets.Count != 1 || sets[0].Count == 0)
         {
             throw new Mp4FormatException("The configured " + name + " must contain exactly one NAL unit.");
         }
 
-        if (sets[0].Length > ushort.MaxValue) throw new Mp4FormatException("The configured " + name + " is too large.");
-        return sets[0];
+        if (sets[0].Count > ushort.MaxValue) throw new Mp4FormatException("The configured " + name + " is too large.");
+        return sets[0].ToArray();
     }
 
     private static void WriteNalLength(IsoBmffWriter writer, int length, int lengthSize)
@@ -1302,20 +1376,20 @@ public sealed class Mp4Writer : IDisposable
 
     private sealed class PendingVideoAccessUnit
     {
-        public PendingVideoAccessUnit(long pts, long dts, long duration, bool isKeyFrame, IList<byte[]> nals)
+        public PendingVideoAccessUnit(long pts, long dts, long duration, bool isKeyFrame, IList<NalUnitRange> nals)
         {
             Pts = pts;
             Dts = dts;
             Duration = duration;
             IsKeyFrame = isKeyFrame;
-            Nals = new List<byte[]>(nals);
+            Nals = new List<NalUnitRange>(nals);
         }
 
         public long Pts { get; }
         public long Dts { get; }
         public long Duration { get; }
         public bool IsKeyFrame { get; }
-        public List<byte[]> Nals { get; }
+        public List<NalUnitRange> Nals { get; }
     }
 
     private sealed class Mp4Sample
@@ -1340,10 +1414,16 @@ public sealed class Mp4Writer : IDisposable
 
     private sealed class FragmentSample
     {
-        public FragmentSample(bool video, byte[] payload, long pts, long dts, long duration, bool isKeyFrame)
+        public FragmentSample(
+            bool video,
+            FragmentPayloadSource payloadSource,
+            long pts,
+            long dts,
+            long duration,
+            bool isKeyFrame)
         {
             Video = video;
-            Payload = payload;
+            PayloadSource = payloadSource ?? throw new ArgumentNullException(nameof(payloadSource));
             Pts = pts;
             Dts = dts;
             Duration = duration;
@@ -1351,7 +1431,8 @@ public sealed class Mp4Writer : IDisposable
         }
 
         public bool Video { get; }
-        public byte[] Payload { get; }
+        public FragmentPayloadSource PayloadSource { get; }
+        public int EncodedSize => PayloadSource.EncodedSize;
         public long Pts { get; }
         public long Dts { get; }
         public long Duration { get; }
