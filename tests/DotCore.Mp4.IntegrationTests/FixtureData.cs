@@ -8,11 +8,15 @@ namespace DotCore.Mp4.IntegrationTests;
 
 internal static class FixtureData
 {
+    // FFmpeg 6.1.1 lavfi testsrc 16x16@25, 3 frames, GOP=2, no B-frames,
+    // libx264 ultrafast/zerolatency with repeated headers and SEI removed.
     private const string H264AnnexBBase64 =
-        "AAAAAWdCwArd7ARAAAADAEAAAAyjxIngAAAAAWjOD8gAAAFliIQ6EYoAAhjxwABA9jgACHlgAAAAAWdCwArd7ARAAAADAEAAAAyjxIngAAAAAWjOD8gAAAFliIICKEYoAAjGxwABCLjgACO5gA==";
+        "AAAAAWdCwAraewEQAAADABAAAAMDKPEiagAAAAFozg/IAAABZYiEOgxgAdAAEGcOUC6tg8te9SsWN+AAs2arfzICYaAt+5aCoVx8XBoo0twCICCvVzlQiI236uxABAEYoiEcOXp48ylu1oBFBSnPhBrlPBwq/4sAQBGOGEUVzUGmHuF+U8QAAIC4AAgDg+4OAIAjAArHYAtVUBQ4Tv6aBGUhp4xD7BwBAEYEAEARgDsuA/EQEGiV/bc5ABvXIAQF9f8GAAIBAACWBGeAC6CFZ18w0aZDVFhCKuZUUcCVuYgPpNkLYBxNtOOAQCJZLySQLbAALB4BQLpHWTWVJc69wA4AofS09YFKMJ7c9MjAAEAxQ1/AcIyR6P/aDcAIh/M8OlrOBNoAAAABQZogJJQAAAABZ0LACtp7ARAAAAMAEAAAAwMo8SJqAAAAAWjOD8gAAAFliIIIgxgALgACBecQXPsRblLdH36ABelv8WNjgFfsqwyCzC3HMP7gkMMi91RY2+dkRAQRilIwZeKSejdrASnIR0ORCgYb+xYIIxxkYyOhzCoehSCAAD4A4u4OCCMAIQAZfQpws7g2RMjiu77BwQRgQEEYDKA2aCEijuBlwP3oGP2/gwACwDSCFiADRDbXMcc8KUQmtYwh5vUoB0tIrAMai6xDbyVpG9d4ADzgUXC1Vq6ha/rQYU2qnsGUxO+1rmAC5v4CC5R0/9o2ACQubgkZtDWg";
 
+    // Same deterministic source encoded by libx265 ultrafast/zerolatency,
+    // repeated headers, no B-frames, and prefix/suffix SEI removed.
     private const string H265AnnexBBase64 =
-        "AAAAAUABDAH//wQIAAADAJ+oAAADAAAeugJAAAAAAUIBAQQIAAADAJ+oAAADAAAeoIhFlulvC8BaAgAAAwACAAADADIQAAAAAUQBwHGBEgAAASgBreDHp/65eI5r/+n3AAAAAUABDAH//wQIAAADAJ+oAAADAAAeugJAAAAAAUIBAQQIAAADAJ+oAAADAAAeoIhFlulvC8BaAgAAAwACAAADADIQAAAAAUQBwHGBEgAAASgBrG7ij/8Wl9/ZI9+3zg==";
+        "AAAAAUABDAH//wFgAAADAJAAAAMAAAMAHroCQAAAAAFCAQEBYAAAAwCQAAADAAADAB6giEWW6W8LwFoCAAADAAIAAAMAMhAAAAABRAHAcYESAAABKAGt4MMEuTHiWXJSyyxW+N6xv4Vq5NEIAF88qQR7s6AK2iwJQofxXQO9JkVjFzGgLp4R1sYfkG3kVpTNd2KjCCxznMfo6w5mRN9PhVa8xlgx/J7hEMaOgHZJJ0B+IoUP8WzcQzW5JAOipWkL8gMFlUuBEY1LN6GVlyrk16YeQpiiPLHACjVDVNbdv3/7c55wYmjYkFHPVPDxKC8ouQa8aExGWgCJuLF2x+ZoRlfUP75/wJyOx9ynyxVnd/vF2pb9g0yzVmXZXX2/w8Psf8R/gLf+H1n0mAAAAAECAdAJeIGs78AAAAABQAEMAf//AWAAAAMAkAAAAwAAAwAeugJAAAAAAUIBAQFgAAADAJAAAAMAAAMAHqCIRZbpbwvAWgIAAAMAAgAAAwAyEAAAAAFEAcBxgRIAAAEqAawI9RSAH9lHHwSnhz2diG3Ost5oqarsNScVT2t9brQQJud9VVWAIrO8xnqbZG5rTcRCmYE4pW2xSkEbxY1AEbk9uoxR/V+tAOX3+HqPMtqT6+ZuCgaEeUF6P1uzt0/JeUtEOF0Uw9//8TYgyC2n2Z4GecXMuGDFJCCeIEHmDFCPsAInv/x+XBK9IEXM1lDJZDQ/q5C/9HdOo0Z2Lq51yJBBwA==";
 
     private const string AacAdtsBase64 =
         "//FQQBHf/N4CAExhdmM2MC4zMS4xMDIAAnClW2CobVELQn3/p149pm99eZPHs3JIecki5J8IEyVMl0dpEYVMlGFYllqdLU7Vpyq0k5v+qSwHIlWYz8aOo1d2txqm2ybapnBEEU1qa0yUyUyUDAwMDAwMDAwMDAwMDAwMbNgyKWWWKKKKKKKKKKKKKKKLgP/xUEAVn/wBEpTaiV2WS6slUlkun/9j/f8daeert//V/9vv1rjicfp//W/6/fzrrWtf1//qf+f11rrjVie7C0ajXrNN3ksS/+qHD1KU2y7neu+j130beYB9Od5gH0+jzwH0+iXmAAfTn+jzzAA+eJ2z69iNpCQhhERRQxRfKIcS+QlUDGwYlKoGlBgaVTgwMiBgY3Li4MDAwMDUIj0UxU886p59k+zmn+Xy5uD/8VBAD7/8ARaVpojdIuyPVkug7f/2P+v386d/xrX2//z/+V+b6u5x//e9vOtXq9B3ujmsNspna0YxR2X2bDY2RNlvXsGyz+Xq2CJ/LZ8OYsFMQaEmmne+H4sz4n30nz+Rt/Mft17DNozEYmFI4rD++R3LumghbhzNOZ33eP/xUEABn/wBGIG0cA==";
@@ -26,8 +30,14 @@ internal static class FixtureData
         {
             var nals = SplitAnnexB(Convert.FromBase64String(H264AnnexBBase64));
             return new VideoFixture(
-                VideoCodecConfiguration.CreateH264(nals[0], nals[1], 4, 16, 16),
-                new[] { nals[2], nals[5] });
+                VideoCodecConfiguration.CreateH264(
+                    nals.First(nal => (nal[0] & 0x1f) == 7),
+                    nals.First(nal => (nal[0] & 0x1f) == 8),
+                    4,
+                    16,
+                    16),
+                nals.Where(nal => (nal[0] & 0x1f) == 1 || (nal[0] & 0x1f) == 5).ToArray(),
+                new[] { true, false, true });
         }
     }
 
@@ -37,32 +47,58 @@ internal static class FixtureData
         {
             var nals = SplitAnnexB(Convert.FromBase64String(H265AnnexBBase64));
             return new VideoFixture(
-                VideoCodecConfiguration.CreateH265(nals[0], nals[1], nals[2], 4, 16, 16),
-                new[] { nals[3], nals[7] });
+                VideoCodecConfiguration.CreateH265(
+                    nals.First(nal => ((nal[0] >> 1) & 0x3f) == 32),
+                    nals.First(nal => ((nal[0] >> 1) & 0x3f) == 33),
+                    nals.First(nal => ((nal[0] >> 1) & 0x3f) == 34),
+                    4,
+                    16,
+                    16),
+                nals.Where(nal => ((nal[0] >> 1) & 0x3f) <= 31).ToArray(),
+                new[] { true, false, true });
         }
     }
 
     public static IReadOnlyList<byte[]> AacAccessUnits => ParseAdts(Convert.FromBase64String(AacAdtsBase64));
 
-    public static void WriteMixedFile(string path, VideoFixture video)
+    public static void WriteMixedFile(
+        string path,
+        VideoFixture video,
+        Mp4WriteMode mode = Mp4WriteMode.Progressive)
     {
         using (var stream = File.Create(path))
-        using (var writer = new Mp4Writer(stream))
+        using (var writer = new Mp4Writer(stream, new Mp4WriterOptions { Mode = mode }))
         {
             writer.SetVideoCodecConfiguration(video.Configuration);
             writer.SetAudioCodecConfiguration(AacConfiguration);
-            for (var i = 0; i < video.Frames.Count; i++)
-            {
-                var timestamp = TimeSpan.FromMilliseconds(i * 40);
-                writer.WriteVideoNalUnit(new EncodedVideoNalUnit(video.Frames[i], timestamp, timestamp, TimeSpan.FromMilliseconds(40), true));
-            }
-
-            var audioTimestamp = TimeSpan.Zero;
             var audioDuration = TimeSpan.FromTicks((long)Math.Round(TimeSpan.TicksPerSecond * 1024.0 / AacConfiguration.SampleRate));
-            foreach (var accessUnit in AacAccessUnits.Take(2))
+            var audio = AacAccessUnits.Take(4).ToArray();
+            var videoIndex = 0;
+            var audioIndex = 0;
+            while (videoIndex < video.Frames.Count || audioIndex < audio.Length)
             {
-                writer.WriteAudioSample(new EncodedAudioSample(accessUnit, audioTimestamp, audioTimestamp, audioDuration));
-                audioTimestamp += audioDuration;
+                var videoTimestamp = TimeSpan.FromMilliseconds(videoIndex * 40);
+                var audioTimestamp = TimeSpan.FromTicks(audioDuration.Ticks * audioIndex);
+                if (videoIndex < video.Frames.Count &&
+                    (audioIndex >= audio.Length || videoTimestamp <= audioTimestamp))
+                {
+                    writer.WriteVideoNalUnit(new EncodedVideoNalUnit(
+                        video.Frames[videoIndex],
+                        videoTimestamp,
+                        videoTimestamp,
+                        TimeSpan.FromMilliseconds(40),
+                        video.KeyFrames[videoIndex]));
+                    videoIndex++;
+                }
+                else
+                {
+                    writer.WriteAudioSample(new EncodedAudioSample(
+                        audio[audioIndex],
+                        audioTimestamp,
+                        audioTimestamp,
+                        audioDuration));
+                    audioIndex++;
+                }
             }
 
             writer.FinalizeFile();
@@ -132,12 +168,18 @@ internal static class FixtureData
 
 internal sealed class VideoFixture
 {
-    public VideoFixture(VideoCodecConfiguration configuration, IReadOnlyList<byte[]> frames)
+    public VideoFixture(
+        VideoCodecConfiguration configuration,
+        IReadOnlyList<byte[]> frames,
+        IReadOnlyList<bool> keyFrames)
     {
+        if (frames.Count != keyFrames.Count) throw new ArgumentException("Frame metadata count mismatch.");
         Configuration = configuration;
         Frames = frames;
+        KeyFrames = keyFrames;
     }
 
     public VideoCodecConfiguration Configuration { get; }
     public IReadOnlyList<byte[]> Frames { get; }
+    public IReadOnlyList<bool> KeyFrames { get; }
 }

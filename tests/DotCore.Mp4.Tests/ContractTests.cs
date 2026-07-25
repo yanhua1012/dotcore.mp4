@@ -84,6 +84,8 @@ public sealed class ContractTests
         Assert.Equal(90L, MediaTime.ToTicks(TimeSpan.FromMilliseconds(1), 90000));
         Assert.Throws<Mp4TimestampException>(() => MediaTime.ToTicks(TimeSpan.FromTicks(1), 90000));
         Assert.Equal(TimeSpan.FromMilliseconds(1), MediaTime.FromTicks(90, 90000));
+        Assert.Throws<Mp4FormatException>(() => MediaTime.FromTicks(1024, 44100));
+        Assert.Equal(TimeSpan.FromTicks(232200), MediaTime.FromTicksRounded(1024, 44100));
     }
 
     [Fact]

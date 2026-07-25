@@ -1,36 +1,78 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 
 namespace DotCore.Mp4;
 
-/// <summary>Writes a progressive, non-fragmented MP4 to a caller-owned seekable stream.</summary>
+/// <summary>將 progressive、faststart 或 fragmented MP4 寫入 caller-owned stream。</summary>
 public sealed class Mp4Writer : IDisposable
 {
     private readonly Stream _output;
     private readonly bool _leaveOpen;
+    private readonly Mp4WriteMode _mode;
+    private readonly int _maximumFragmentBufferBytes;
     private readonly List<Mp4Sample> _videoSamples = new List<Mp4Sample>();
     private readonly List<Mp4Sample> _audioSamples = new List<Mp4Sample>();
+    private readonly List<FragmentSample> _fragmentSamples = new List<FragmentSample>();
     private readonly long _mdatStart;
     private PendingVideoAccessUnit? _pendingVideo;
     private long? _lastVideoDts;
     private long? _lastAudioDts;
+    private long? _lastGlobalDts;
     private VideoCodecConfiguration? _videoConfiguration;
     private AacCodecConfiguration? _audioConfiguration;
     private bool _finalized;
     private bool _disposed;
+    private bool _fragmentedStarted;
+    private bool _fragmentedHasVideoSample;
+    private int _fragmentBufferedBytes;
+    private uint _fragmentSequenceNumber = 1;
 
     public Mp4Writer(Stream output, bool leaveOpen = true)
+        : this(output, new Mp4WriterOptions(), leaveOpen)
+    {
+    }
+
+    /// <summary>以指定的輸出選項建立 MP4 writer。</summary>
+    /// <param name="output">接收 MP4 資料的 caller-owned stream。</param>
+    /// <param name="options">輸出模式與資源限制；writer 會在建構時複製其值。</param>
+    /// <param name="leaveOpen">writer 釋放時是否保持 <paramref name="output"/> 開啟。</param>
+    public Mp4Writer(Stream output, Mp4WriterOptions options, bool leaveOpen = true)
     {
         if (output == null) throw new ArgumentNullException(nameof(output));
-        if (!output.CanWrite || !output.CanSeek)
+        if (options == null) throw new ArgumentNullException(nameof(options));
+        if (options.Mode != Mp4WriteMode.Progressive &&
+            options.Mode != Mp4WriteMode.FastStart &&
+            options.Mode != Mp4WriteMode.Fragmented)
         {
-            throw new InvalidOperationException("MP4 output requires a writable, seekable stream; no MP4 header was emitted.");
+            throw new ArgumentOutOfRangeException(
+                nameof(Mp4WriterOptions.Mode),
+                options.Mode,
+                "MP4 write mode must be Progressive, FastStart, or Fragmented.");
         }
+
+        if (options.MaximumFragmentBufferBytes <= 0)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(Mp4WriterOptions.MaximumFragmentBufferBytes),
+                options.MaximumFragmentBufferBytes,
+                "Maximum fragment buffer bytes must be greater than zero.");
+        }
+
+        ValidateOutputCapabilities(output, options.Mode);
 
         _output = output;
         _leaveOpen = leaveOpen;
+        _mode = options.Mode;
+        _maximumFragmentBufferBytes = options.MaximumFragmentBufferBytes;
+
+        if (_mode == Mp4WriteMode.Fragmented)
+        {
+            _mdatStart = -1;
+            return;
+        }
 
         var writer = new IsoBmffWriter(_output);
         WriteFileTypeBox(writer);
@@ -38,6 +80,51 @@ public sealed class Mp4Writer : IDisposable
         writer.WriteUInt32(1);
         writer.WriteFourCc("mdat");
         writer.WriteUInt64(0);
+    }
+
+    private static void ValidateOutputCapabilities(Stream output, Mp4WriteMode mode)
+    {
+        if (!output.CanWrite)
+        {
+            throw new InvalidOperationException("MP4 output requires a writable stream; no MP4 header was emitted.");
+        }
+
+        if (mode == Mp4WriteMode.Fragmented)
+        {
+            return;
+        }
+
+        if (!output.CanSeek)
+        {
+            throw new InvalidOperationException("Progressive and faststart MP4 output requires a seekable stream; no MP4 header was emitted.");
+        }
+
+        if (mode != Mp4WriteMode.FastStart)
+        {
+            return;
+        }
+
+        if (!output.CanRead)
+        {
+            throw new InvalidOperationException("Faststart MP4 output requires a readable stream; no MP4 header was emitted.");
+        }
+
+        try
+        {
+            var length = output.Length;
+            var position = output.Position;
+            output.SetLength(length);
+            output.Position = position;
+        }
+        catch (Exception error) when (
+            error is NotSupportedException ||
+            error is InvalidOperationException ||
+            error is IOException)
+        {
+            throw new InvalidOperationException(
+                "Faststart MP4 output requires a stream that supports changing its length; no MP4 header was emitted.",
+                error);
+        }
     }
 
     public VideoCodecConfiguration? VideoConfiguration => _videoConfiguration;
@@ -51,7 +138,7 @@ public sealed class Mp4Writer : IDisposable
     {
         EnsureWritable();
         if (configuration == null) throw new ArgumentNullException(nameof(configuration));
-        if (_videoConfiguration != null || _videoSamples.Count != 0 || _pendingVideo != null)
+        if (_videoConfiguration != null || _videoSamples.Count != 0 || _pendingVideo != null || _fragmentedStarted)
         {
             throw new InvalidOperationException("The video codec configuration can only be set once before video samples are written.");
         }
@@ -67,7 +154,7 @@ public sealed class Mp4Writer : IDisposable
     {
         EnsureWritable();
         if (configuration == null) throw new ArgumentNullException(nameof(configuration));
-        if (_audioConfiguration != null || _audioSamples.Count != 0)
+        if (_audioConfiguration != null || _audioSamples.Count != 0 || _fragmentedStarted)
         {
             throw new InvalidOperationException("The AAC codec configuration can only be set once before audio samples are written.");
         }
@@ -90,9 +177,14 @@ public sealed class Mp4Writer : IDisposable
         var dts = MediaTime.ToTicks(sample.DecodeTimestamp, MediaTime.DefaultTrackTimescale);
         var duration = MediaTime.ToTicks(sample.Duration, MediaTime.DefaultTrackTimescale);
         ValidateTimedSample(dts, duration, _lastVideoDts, "video");
-        _lastVideoDts = dts;
-
         var nalUnits = NalUnits.Normalize(sample.DataBytes);
+        if (_mode == Mp4WriteMode.Fragmented)
+        {
+            WriteFragmentedVideoNalUnits(sample, nalUnits, pts, dts, duration);
+            return;
+        }
+
+        _lastVideoDts = dts;
         if (_pendingVideo != null && _pendingVideo.Pts == pts && _pendingVideo.Dts == dts)
         {
             if (_pendingVideo.Duration != duration || _pendingVideo.IsKeyFrame != sample.IsKeyFrame)
@@ -125,8 +217,25 @@ public sealed class Mp4Writer : IDisposable
         var dts = MediaTime.ToTicks(sample.DecodeTimestamp, MediaTime.DefaultTrackTimescale);
         var duration = MediaTime.ToTicks(sample.Duration, MediaTime.DefaultTrackTimescale);
         ValidateTimedSample(dts, duration, _lastAudioDts, "audio");
-        _lastAudioDts = dts;
+        if (_mode == Mp4WriteMode.Fragmented)
+        {
+            if (_videoConfiguration == null)
+            {
+                throw new InvalidOperationException("Fragmented MP4 output requires video configuration before AAC media.");
+            }
 
+            ValidateGlobalDts(dts, "audio");
+            var data = sample.DataBytes;
+            EnsureFragmentBufferCapacity(data.Length);
+            EnsureFragmentedStarted();
+            _fragmentSamples.Add(new FragmentSample(false, data, pts, dts, duration, true));
+            _fragmentBufferedBytes = checked(_fragmentBufferedBytes + data.Length);
+            _lastAudioDts = dts;
+            _lastGlobalDts = dts;
+            return;
+        }
+
+        _lastAudioDts = dts;
         var offset = _output.Position;
         _output.Write(sample.DataBytes, 0, sample.DataBytes.Length);
         _audioSamples.Add(new Mp4Sample(offset, sample.DataBytes.Length, pts, dts, duration, true));
@@ -135,8 +244,21 @@ public sealed class Mp4Writer : IDisposable
     /// <summary>Backpatches mdat and appends the complete movie metadata.</summary>
     public void FinalizeFile()
     {
-        EnsureWritable();
+        if (_disposed) throw new ObjectDisposedException(nameof(Mp4Writer));
         if (_finalized) return;
+
+        if (_mode == Mp4WriteMode.Fragmented)
+        {
+            CommitPendingFragmentedVideo();
+            if (!_fragmentedHasVideoSample)
+            {
+                throw new InvalidOperationException("Fragmented MP4 output requires at least one video sample.");
+            }
+
+            FlushFragment(null);
+            _finalized = true;
+            return;
+        }
 
         FlushPendingVideo();
         if (_videoSamples.Count == 0 && _audioSamples.Count == 0)
@@ -154,8 +276,17 @@ public sealed class Mp4Writer : IDisposable
         headerWriter.WriteUInt64(mdatSize);
         _output.Seek(restore, SeekOrigin.Begin);
 
-        var moov = BuildMovieBox();
-        _output.Write(moov, 0, moov.Length);
+        if (_mode == Mp4WriteMode.FastStart)
+        {
+            var moov = FastStartLayout.BuildStableMovieBox(BuildMovieBox);
+            RelocateMdatForFastStart(endOfMdat, moov);
+        }
+        else
+        {
+            var moov = BuildMovieBox(0);
+            _output.Write(moov, 0, moov.Length);
+        }
+
         _finalized = true;
     }
 
@@ -175,6 +306,12 @@ public sealed class Mp4Writer : IDisposable
     private void FlushPendingVideo()
     {
         if (_pendingVideo == null) return;
+        if (_mode == Mp4WriteMode.Fragmented)
+        {
+            CommitPendingFragmentedVideo();
+            return;
+        }
+
         if (_videoConfiguration == null)
         {
             throw new InvalidOperationException("Configure a video codec before writing video NAL units.");
@@ -210,7 +347,389 @@ public sealed class Mp4Writer : IDisposable
         _pendingVideo = null;
     }
 
-    private byte[] BuildMovieBox()
+    private void WriteFragmentedVideoNalUnits(
+        EncodedVideoNalUnit sample,
+        IList<byte[]> nalUnits,
+        long pts,
+        long dts,
+        long duration)
+    {
+        ValidateGlobalDts(dts, "video");
+        var additionalBytes = GetEncodedVideoSize(nalUnits, _videoConfiguration!.NalLengthSize);
+        if (_pendingVideo != null && _pendingVideo.Pts == pts && _pendingVideo.Dts == dts)
+        {
+            if (_pendingVideo.Duration != duration || _pendingVideo.IsKeyFrame != sample.IsKeyFrame)
+            {
+                throw new Mp4FormatException("NAL units in one access unit must have the same duration and key-frame state.");
+            }
+
+            EnsureFragmentBufferCapacity(additionalBytes);
+            _pendingVideo.Nals.AddRange(nalUnits);
+            _fragmentBufferedBytes = checked(_fragmentBufferedBytes + additionalBytes);
+            _lastVideoDts = dts;
+            _lastGlobalDts = dts;
+            return;
+        }
+
+        if (!_fragmentedHasVideoSample && _pendingVideo == null && !sample.IsKeyFrame)
+        {
+            throw new InvalidOperationException("The first fragmented video access unit must be a keyframe.");
+        }
+
+        CommitPendingFragmentedVideo();
+        if (sample.IsKeyFrame && _fragmentedHasVideoSample)
+        {
+            FlushFragment(dts);
+        }
+
+        EnsureFragmentBufferCapacity(additionalBytes);
+        EnsureFragmentedStarted();
+        _pendingVideo = new PendingVideoAccessUnit(pts, dts, duration, sample.IsKeyFrame, nalUnits);
+        _fragmentBufferedBytes = checked(_fragmentBufferedBytes + additionalBytes);
+        _lastVideoDts = dts;
+        _lastGlobalDts = dts;
+    }
+
+    private void EnsureFragmentedStarted()
+    {
+        if (_fragmentedStarted) return;
+        if (_videoConfiguration == null)
+        {
+            throw new InvalidOperationException("Fragmented MP4 output requires video configuration before media.");
+        }
+
+        var fileType = BuildBytes(WriteFileTypeBox);
+        var movie = BuildFragmentedInitialMovieBox();
+        _output.Write(fileType, 0, fileType.Length);
+        _output.Write(movie, 0, movie.Length);
+        _fragmentedStarted = true;
+    }
+
+    private void EnsureFragmentBufferCapacity(int additionalBytes)
+    {
+        if (additionalBytes < 0 ||
+            additionalBytes > _maximumFragmentBufferBytes - _fragmentBufferedBytes)
+        {
+            throw new InvalidOperationException(
+                "The fragmented MP4 buffer limit was exceeded before the next keyframe.");
+        }
+    }
+
+    private void ValidateGlobalDts(long dts, string trackName)
+    {
+        if (_lastGlobalDts.HasValue && dts < _lastGlobalDts.Value)
+        {
+            throw new Mp4TimestampException(
+                trackName + " DTS must not decrease across fragmented video and audio submissions.");
+        }
+    }
+
+    private static int GetEncodedVideoSize(IList<byte[]> nalUnits, int nalLengthSize)
+    {
+        var size = 0;
+        foreach (var nal in nalUnits)
+        {
+            if (nal.Length > MaxLengthForNal(nalLengthSize))
+            {
+                throw new Mp4FormatException("A video NAL unit does not fit in the configured MP4 length field.");
+            }
+
+            size = checked(size + nalLengthSize + nal.Length);
+        }
+
+        if (size == 0) throw new Mp4FormatException("A video access unit must not be empty.");
+        return size;
+    }
+
+    private void CommitPendingFragmentedVideo()
+    {
+        if (_pendingVideo == null) return;
+        if (_videoConfiguration == null)
+        {
+            throw new InvalidOperationException("Video configuration is missing.");
+        }
+
+        var payload = BuildBytes(writer =>
+        {
+            foreach (var nal in _pendingVideo.Nals)
+            {
+                WriteNalLength(writer, nal.Length, _videoConfiguration.NalLengthSize);
+                writer.WriteBytes(nal);
+            }
+        });
+        _fragmentSamples.Add(new FragmentSample(
+            true,
+            payload,
+            _pendingVideo.Pts,
+            _pendingVideo.Dts,
+            _pendingVideo.Duration,
+            _pendingVideo.IsKeyFrame));
+        _fragmentedHasVideoSample = true;
+        _pendingVideo = null;
+    }
+
+    private byte[] BuildFragmentedInitialMovieBox()
+    {
+        using (var stream = new MemoryStream())
+        {
+            var writer = new IsoBmffWriter(stream);
+            var moov = writer.BeginBox("moov");
+            WriteMovieHeader(writer, 0);
+            var videoTrackId = 1;
+            WriteFragmentedVideoTrack(writer, videoTrackId);
+            var audioTrackId = 0;
+            if (_audioConfiguration != null)
+            {
+                audioTrackId = 2;
+                WriteFragmentedAudioTrack(writer, audioTrackId);
+            }
+
+            WriteMovieExtends(writer, videoTrackId, audioTrackId);
+            writer.EndBox(moov);
+            return stream.ToArray();
+        }
+    }
+
+    private void WriteFragmentedVideoTrack(IsoBmffWriter writer, int trackId)
+    {
+        if (_videoConfiguration == null) throw new InvalidOperationException("Video configuration is missing.");
+        var trak = writer.BeginBox("trak");
+        WriteTrackHeader(writer, trackId, 0, false, _videoConfiguration.Width, _videoConfiguration.Height);
+        var mdia = writer.BeginBox("mdia");
+        WriteMediaHeader(writer, 0);
+        WriteHandler(writer, "vide", "DotCore MP4 Video");
+        var minf = writer.BeginBox("minf");
+        var vmhd = writer.BeginBox("vmhd");
+        WriteFullBoxHeader(writer, 0, 1);
+        writer.WriteZeros(8);
+        writer.EndBox(vmhd);
+        WriteDataInformation(writer);
+        WriteSampleTable(writer, true, Array.Empty<Mp4Sample>(), _videoConfiguration, null, 0);
+        writer.EndBox(minf);
+        writer.EndBox(mdia);
+        writer.EndBox(trak);
+    }
+
+    private void WriteFragmentedAudioTrack(IsoBmffWriter writer, int trackId)
+    {
+        if (_audioConfiguration == null) throw new InvalidOperationException("AAC configuration is missing.");
+        var trak = writer.BeginBox("trak");
+        WriteTrackHeader(writer, trackId, 0, true, 0, 0);
+        var mdia = writer.BeginBox("mdia");
+        WriteMediaHeader(writer, 0);
+        WriteHandler(writer, "soun", "DotCore MP4 AAC Audio");
+        var minf = writer.BeginBox("minf");
+        var smhd = writer.BeginBox("smhd");
+        WriteFullBoxHeader(writer, 0, 0);
+        writer.WriteInt16(0);
+        writer.WriteUInt16(0);
+        writer.EndBox(smhd);
+        WriteDataInformation(writer);
+        WriteSampleTable(writer, false, Array.Empty<Mp4Sample>(), null, _audioConfiguration, 0);
+        writer.EndBox(minf);
+        writer.EndBox(mdia);
+        writer.EndBox(trak);
+    }
+
+    private static void WriteMovieExtends(IsoBmffWriter writer, int videoTrackId, int audioTrackId)
+    {
+        var mvex = writer.BeginBox("mvex");
+        WriteTrackExtends(writer, videoTrackId);
+        if (audioTrackId != 0) WriteTrackExtends(writer, audioTrackId);
+        writer.EndBox(mvex);
+    }
+
+    private static void WriteTrackExtends(IsoBmffWriter writer, int trackId)
+    {
+        var trex = writer.BeginBox("trex");
+        WriteFullBoxHeader(writer, 0, 0);
+        writer.WriteUInt32((uint)trackId);
+        writer.WriteUInt32(1);
+        writer.WriteUInt32(0);
+        writer.WriteUInt32(0);
+        writer.WriteUInt32(0);
+        writer.EndBox(trex);
+    }
+
+    private void FlushFragment(long? boundaryDts)
+    {
+        var selected = new List<FragmentSample>();
+        foreach (var sample in _fragmentSamples)
+        {
+            if (!boundaryDts.HasValue || sample.Dts < boundaryDts.Value)
+            {
+                selected.Add(sample);
+            }
+        }
+
+        if (selected.Count == 0) return;
+        if (!selected.Any(sample => sample.Video))
+        {
+            if (!boundaryDts.HasValue)
+            {
+                throw new InvalidOperationException("A fragmented MP4 fragment must contain video.");
+            }
+
+            return;
+        }
+
+        var firstVideo = selected.First(sample => sample.Video);
+        if (!firstVideo.IsKeyFrame)
+        {
+            throw new InvalidOperationException("A fragmented MP4 fragment must start with a video keyframe.");
+        }
+
+        var video = selected.Where(sample => sample.Video).ToList();
+        var audio = selected.Where(sample => !sample.Video).ToList();
+        var provisional = BuildMovieFragment(video, audio, 0, 0);
+        var videoDataOffset = checked(provisional.Length + 8);
+        var videoPayloadBytes = video.Sum(sample => sample.Payload.Length);
+        var audioDataOffset = checked(videoDataOffset + videoPayloadBytes);
+        var moof = BuildMovieFragment(video, audio, videoDataOffset, audioDataOffset);
+        if (moof.Length != provisional.Length)
+        {
+            throw new Mp4FormatException("Fragment metadata length changed while resolving trun data offsets.");
+        }
+
+        _output.Write(moof, 0, moof.Length);
+        var payloadBytes = checked(videoPayloadBytes + audio.Sum(sample => sample.Payload.Length));
+        var mdatSize = checked(payloadBytes + 8);
+        var outputWriter = new IsoBmffWriter(_output);
+        outputWriter.WriteUInt32((uint)mdatSize);
+        outputWriter.WriteFourCc("mdat");
+        foreach (var sample in video) _output.Write(sample.Payload, 0, sample.Payload.Length);
+        foreach (var sample in audio) _output.Write(sample.Payload, 0, sample.Payload.Length);
+
+        foreach (var sample in selected)
+        {
+            _fragmentSamples.Remove(sample);
+            _fragmentBufferedBytes = checked(_fragmentBufferedBytes - sample.Payload.Length);
+        }
+
+        _fragmentedHasVideoSample = _fragmentSamples.Any(sample => sample.Video);
+        _fragmentSequenceNumber = checked(_fragmentSequenceNumber + 1);
+    }
+
+    private byte[] BuildMovieFragment(
+        IList<FragmentSample> video,
+        IList<FragmentSample> audio,
+        int videoDataOffset,
+        int audioDataOffset)
+    {
+        using (var stream = new MemoryStream())
+        {
+            var writer = new IsoBmffWriter(stream);
+            var moof = writer.BeginBox("moof");
+            var mfhd = writer.BeginBox("mfhd");
+            WriteFullBoxHeader(writer, 0, 0);
+            writer.WriteUInt32(_fragmentSequenceNumber);
+            writer.EndBox(mfhd);
+            if (video.Count != 0) WriteTrackFragment(writer, 1, video, videoDataOffset);
+            if (audio.Count != 0) WriteTrackFragment(writer, 2, audio, audioDataOffset);
+            writer.EndBox(moof);
+            return stream.ToArray();
+        }
+    }
+
+    private static void WriteTrackFragment(
+        IsoBmffWriter writer,
+        int trackId,
+        IList<FragmentSample> samples,
+        int dataOffset)
+    {
+        var traf = writer.BeginBox("traf");
+        var tfhd = writer.BeginBox("tfhd");
+        WriteFullBoxHeader(writer, 0, 0x020000);
+        writer.WriteUInt32((uint)trackId);
+        writer.EndBox(tfhd);
+        var tfdt = writer.BeginBox("tfdt");
+        WriteFullBoxHeader(writer, 1, 0);
+        writer.WriteUInt64(checked((ulong)samples[0].Dts));
+        writer.EndBox(tfdt);
+
+        var signedCompositionOffsets = samples.Any(sample => sample.Pts < sample.Dts);
+        var trun = writer.BeginBox("trun");
+        WriteFullBoxHeader(writer, signedCompositionOffsets ? (byte)1 : (byte)0, 0x000f01);
+        writer.WriteUInt32((uint)samples.Count);
+        writer.WriteInt32(dataOffset);
+        foreach (var sample in samples)
+        {
+            if (sample.Duration > uint.MaxValue) throw new Mp4FormatException("A fragment sample duration exceeds the trun range.");
+            writer.WriteUInt32((uint)sample.Duration);
+            writer.WriteUInt32((uint)sample.Payload.Length);
+            writer.WriteUInt32(sample.Video
+                ? sample.IsKeyFrame ? 0x02000000U : 0x01010000U
+                : 0x02000000U);
+            var compositionOffset = checked(sample.Pts - sample.Dts);
+            if (signedCompositionOffsets)
+            {
+                if (compositionOffset < int.MinValue || compositionOffset > int.MaxValue)
+                {
+                    throw new Mp4FormatException("A fragment composition offset exceeds the signed trun range.");
+                }
+
+                writer.WriteInt32((int)compositionOffset);
+            }
+            else
+            {
+                if (compositionOffset < 0 || compositionOffset > uint.MaxValue)
+                {
+                    throw new Mp4FormatException("A fragment composition offset exceeds the unsigned trun range.");
+                }
+
+                writer.WriteUInt32((uint)compositionOffset);
+            }
+        }
+
+        writer.EndBox(trun);
+        writer.EndBox(traf);
+    }
+
+    private void RelocateMdatForFastStart(long endOfMdat, byte[] moov)
+    {
+        const int relocationBufferBytes = 64 * 1024;
+        var destinationEnd = checked(endOfMdat + moov.LongLength);
+        _output.SetLength(destinationEnd);
+        var buffer = new byte[relocationBufferBytes];
+        var sourceEnd = endOfMdat;
+        try
+        {
+            while (sourceEnd > _mdatStart)
+            {
+                var count = (int)Math.Min(buffer.Length, sourceEnd - _mdatStart);
+                var sourceStart = sourceEnd - count;
+                _output.Position = sourceStart;
+                var read = 0;
+                while (read < count)
+                {
+                    var current = _output.Read(buffer, read, count - read);
+                    if (current == 0)
+                    {
+                        throw new IOException("Faststart mdat relocation encountered an unexpected end of stream.");
+                    }
+
+                    read += current;
+                }
+
+                _output.Position = checked(sourceStart + moov.LongLength);
+                _output.Write(buffer, 0, count);
+                sourceEnd = sourceStart;
+            }
+
+            _output.Position = _mdatStart;
+            _output.Write(moov, 0, moov.Length);
+            _output.Position = destinationEnd;
+        }
+        catch (Exception error) when (
+            error is IOException ||
+            error is NotSupportedException ||
+            error is InvalidOperationException)
+        {
+            throw new IOException("Faststart mdat relocation failed; the output may be incomplete.", error);
+        }
+    }
+
+    private byte[] BuildMovieBox(long chunkOffsetAdjustment)
     {
         using (var stream = new MemoryStream())
         {
@@ -221,12 +740,12 @@ public sealed class Mp4Writer : IDisposable
             var trackId = 1;
             if (_videoSamples.Count != 0)
             {
-                WriteVideoTrack(writer, trackId++);
+                WriteVideoTrack(writer, trackId++, chunkOffsetAdjustment);
             }
 
             if (_audioSamples.Count != 0)
             {
-                WriteAudioTrack(writer, trackId++);
+                WriteAudioTrack(writer, trackId++, chunkOffsetAdjustment);
             }
 
             writer.EndBox(moov);
@@ -234,7 +753,7 @@ public sealed class Mp4Writer : IDisposable
         }
     }
 
-    private void WriteVideoTrack(IsoBmffWriter writer, int trackId)
+    private void WriteVideoTrack(IsoBmffWriter writer, int trackId, long chunkOffsetAdjustment)
     {
         if (_videoConfiguration == null) throw new InvalidOperationException("Video configuration is missing.");
         var trak = writer.BeginBox("trak");
@@ -251,13 +770,13 @@ public sealed class Mp4Writer : IDisposable
         writer.WriteUInt16(0);
         writer.EndBox(vmhd);
         WriteDataInformation(writer);
-        WriteSampleTable(writer, true, _videoSamples, _videoConfiguration, null);
+        WriteSampleTable(writer, true, _videoSamples, _videoConfiguration, null, chunkOffsetAdjustment);
         writer.EndBox(minf);
         writer.EndBox(mdia);
         writer.EndBox(trak);
     }
 
-    private void WriteAudioTrack(IsoBmffWriter writer, int trackId)
+    private void WriteAudioTrack(IsoBmffWriter writer, int trackId, long chunkOffsetAdjustment)
     {
         if (_audioConfiguration == null) throw new InvalidOperationException("AAC configuration is missing.");
         var trak = writer.BeginBox("trak");
@@ -272,7 +791,7 @@ public sealed class Mp4Writer : IDisposable
         writer.WriteUInt16(0);
         writer.EndBox(smhd);
         WriteDataInformation(writer);
-        WriteSampleTable(writer, false, _audioSamples, null, _audioConfiguration);
+        WriteSampleTable(writer, false, _audioSamples, null, _audioConfiguration, chunkOffsetAdjustment);
         writer.EndBox(minf);
         writer.EndBox(mdia);
         writer.EndBox(trak);
@@ -360,7 +879,8 @@ public sealed class Mp4Writer : IDisposable
         bool video,
         IList<Mp4Sample> samples,
         VideoCodecConfiguration? videoConfiguration,
-        AacCodecConfiguration? audioConfiguration)
+        AacCodecConfiguration? audioConfiguration,
+        long chunkOffsetAdjustment)
     {
         var stbl = writer.BeginBox("stbl");
         var stsd = writer.BeginBox("stsd");
@@ -379,7 +899,7 @@ public sealed class Mp4Writer : IDisposable
         WriteTimeToSample(writer, samples);
         WriteSampleToChunk(writer, samples.Count);
         WriteSampleSizes(writer, samples);
-        WriteChunkOffsets(writer, samples);
+        WriteChunkOffsets(writer, samples, chunkOffsetAdjustment);
         if (video)
         {
             WriteSyncSamples(writer, samples);
@@ -564,24 +1084,26 @@ public sealed class Mp4Writer : IDisposable
         writer.EndBox(box);
     }
 
-    private static void WriteChunkOffsets(IsoBmffWriter writer, IList<Mp4Sample> samples)
+    private static void WriteChunkOffsets(IsoBmffWriter writer, IList<Mp4Sample> samples, long adjustment)
     {
-        var useCo64 = SampleTableDecisions.RequiresCo64(GetOffsets(samples));
+        var adjustedOffsets = GetOffsets(samples, adjustment);
+        var useCo64 = SampleTableDecisions.RequiresCo64(adjustedOffsets);
         var box = writer.BeginBox(useCo64 ? "co64" : "stco");
         WriteFullBoxHeader(writer, 0, 0);
         writer.WriteUInt32((uint)samples.Count);
         foreach (var sample in samples)
         {
-            if (useCo64) writer.WriteUInt64(checked((ulong)sample.Offset));
-            else writer.WriteUInt32(sample.Offset);
+            var adjustedOffset = FastStartLayout.AdjustOffset(sample.Offset, adjustment);
+            if (useCo64) writer.WriteUInt64(checked((ulong)adjustedOffset));
+            else writer.WriteUInt32(adjustedOffset);
         }
 
         writer.EndBox(box);
     }
 
-    private static IEnumerable<long> GetOffsets(IList<Mp4Sample> samples)
+    private static IEnumerable<long> GetOffsets(IList<Mp4Sample> samples, long adjustment)
     {
-        foreach (var sample in samples) yield return sample.Offset;
+        foreach (var sample in samples) yield return FastStartLayout.AdjustOffset(sample.Offset, adjustment);
     }
 
     private static void WriteSyncSamples(IsoBmffWriter writer, IList<Mp4Sample> samples)
@@ -810,6 +1332,26 @@ public sealed class Mp4Writer : IDisposable
 
         public long Offset { get; }
         public long Size { get; }
+        public long Pts { get; }
+        public long Dts { get; }
+        public long Duration { get; }
+        public bool IsKeyFrame { get; }
+    }
+
+    private sealed class FragmentSample
+    {
+        public FragmentSample(bool video, byte[] payload, long pts, long dts, long duration, bool isKeyFrame)
+        {
+            Video = video;
+            Payload = payload;
+            Pts = pts;
+            Dts = dts;
+            Duration = duration;
+            IsKeyFrame = isKeyFrame;
+        }
+
+        public bool Video { get; }
+        public byte[] Payload { get; }
         public long Pts { get; }
         public long Dts { get; }
         public long Duration { get; }

@@ -11,6 +11,9 @@ public sealed class Mp4Reader : IDisposable
     internal const long MaximumInputBytes = 256L * 1024 * 1024;
     internal const int MaximumSampleCount = 1_000_000;
     internal const int MaximumDescriptorDepth = 32;
+    internal const int MaximumFragmentCount = 4_096;
+    internal const int MaximumTrackFragmentsPerFragment = 1_024;
+    internal const int MaximumTrackRunsPerFragment = 4_096;
     private const int MaximumTableEntryCount = 1_000_000;
     private const int MaximumDescriptorCount = 4_096;
     private const int MaximumBoxesPerContainer = 100_000;
@@ -179,6 +182,13 @@ public sealed class Mp4Reader : IDisposable
         var moov = FindSingle(topLevel, "moov");
         var trackBoxes = Children(data, moov, "trak");
         ValidateSupportedTrackMultiplicity(data, trackBoxes);
+        var fragments = new List<Box>();
+        foreach (var box in topLevel) if (box.Type == "moof") fragments.Add(box);
+        if (fragments.Count != 0)
+        {
+            RejectAmbiguousProgressiveSampleTables(data, trackBoxes);
+        }
+
         var tracks = new List<ParsedTrack>();
         foreach (var trak in trackBoxes)
         {
@@ -186,7 +196,45 @@ public sealed class Mp4Reader : IDisposable
             if (parsed != null) tracks.Add(parsed);
         }
 
+        if (fragments.Count == 0) return tracks;
+        if (fragments.Count > MaximumFragmentCount)
+        {
+            throw new Mp4FormatException(
+                "MP4 fragment count exceeds the supported limit of " +
+                MaximumFragmentCount + ".");
+        }
+
+        foreach (var track in tracks)
+        {
+            if (track.Samples.Count != 0)
+            {
+                throw new Mp4FormatException(
+                    "A supported track ambiguously contains both progressive samples and movie fragments.");
+            }
+        }
+
+        ParseMovieFragments(data, topLevel, moov, tracks);
         return tracks;
+    }
+
+    private static void RejectAmbiguousProgressiveSampleTables(byte[] data, IList<Box> trackBoxes)
+    {
+        foreach (var trak in trackBoxes)
+        {
+            var mdia = FindSingle(Children(data, trak, "mdia"), "mdia");
+            var handler = FindSingle(Children(data, mdia, "hdlr"), "hdlr");
+            var handlerType = ParseHandlerType(data, handler);
+            if (handlerType != "vide" && handlerType != "soun") continue;
+            var minf = FindSingle(Children(data, mdia, "minf"), "minf");
+            var stbl = FindSingle(Children(data, minf, "stbl"), "stbl");
+            var stsz = FindSingle(Children(data, stbl, "stsz"), "stsz");
+            RequirePayload(stsz, 12, "stsz");
+            if (U32(data, stsz.PayloadStart + 8) != 0)
+            {
+                throw new Mp4FormatException(
+                    "A supported track ambiguously contains both progressive samples and movie fragments.");
+            }
+        }
     }
 
     private static void ValidateSupportedTrackMultiplicity(byte[] data, IList<Box> tracks)
@@ -197,7 +245,7 @@ public sealed class Mp4Reader : IDisposable
         {
             var mdia = FindSingle(Children(data, trak, "mdia"), "mdia");
             var handler = FindSingle(Children(data, mdia, "hdlr"), "hdlr");
-            var handlerType = FourCc(data, handler.PayloadStart + 8);
+            var handlerType = ParseHandlerType(data, handler);
             if (handlerType == "vide")
             {
                 if (hasVideo) throw new Mp4FormatException("The MP4 contains more than one supported video track.");
@@ -213,9 +261,11 @@ public sealed class Mp4Reader : IDisposable
 
     private static ParsedTrack? ParseTrack(byte[] data, Box trak)
     {
+        var trackHeader = FindSingle(Children(data, trak, "tkhd"), "tkhd");
+        var trackId = ParseTrackId(data, trackHeader);
         var mdia = FindSingle(Children(data, trak, "mdia"), "mdia");
         var handler = FindSingle(Children(data, mdia, "hdlr"), "hdlr");
-        var handlerType = FourCc(data, handler.PayloadStart + 8);
+        var handlerType = ParseHandlerType(data, handler);
         if (handlerType != "vide" && handlerType != "soun") return null;
 
         var mdhd = FindSingle(Children(data, mdia, "mdhd"), "mdhd");
@@ -256,7 +306,450 @@ public sealed class Mp4Reader : IDisposable
             sizes.Count);
         var samples = BuildSamples(data, durations, sizes, chunkOffsets, chunkMap, compositionOffsets, syncSamples);
 
-        return new ParsedTrack(data, handlerType, timescale, description.VideoConfiguration, description.AudioConfiguration, samples);
+        return new ParsedTrack(data, trackId, handlerType, timescale, description.VideoConfiguration, description.AudioConfiguration, samples);
+    }
+
+    private static uint ParseTrackId(byte[] data, Box tkhd)
+    {
+        RequirePayload(tkhd, 4, "tkhd");
+        var version = data[tkhd.PayloadStart];
+        long offset;
+        if (version == 0)
+        {
+            RequirePayload(tkhd, 16, "tkhd");
+            offset = tkhd.PayloadStart + 12;
+        }
+        else if (version == 1)
+        {
+            RequirePayload(tkhd, 24, "tkhd");
+            offset = tkhd.PayloadStart + 20;
+        }
+        else throw new Mp4FormatException("Unsupported tkhd version.");
+        var trackId = U32(data, offset);
+        if (trackId == 0) throw new Mp4FormatException("A supported track has an invalid zero track ID.");
+        return trackId;
+    }
+
+    private static string ParseHandlerType(byte[] data, Box handler)
+    {
+        RequirePayload(handler, 12, "hdlr");
+        return FourCc(data, handler.PayloadStart + 8);
+    }
+
+    private static void ParseMovieFragments(
+        byte[] data,
+        IList<Box> topLevel,
+        Box moov,
+        IList<ParsedTrack> tracks)
+    {
+        var trackById = new Dictionary<uint, ParsedTrack>();
+        foreach (var track in tracks)
+        {
+            if (trackById.ContainsKey(track.TrackId))
+            {
+                throw new Mp4FormatException("Supported tracks contain a duplicate track ID.");
+            }
+
+            trackById.Add(track.TrackId, track);
+        }
+
+        var defaults = ParseTrackExtendsDefaults(data, moov, trackById);
+        var decodeEnds = new Dictionary<uint, long>();
+        uint? previousSequence = null;
+        var totalSamples = 0;
+        for (var topIndex = 0; topIndex < topLevel.Count; topIndex++)
+        {
+            var moof = topLevel[topIndex];
+            if (moof.Type != "moof") continue;
+            if (topIndex + 1 >= topLevel.Count || topLevel[topIndex + 1].Type != "mdat")
+            {
+                throw new Mp4FormatException("Each movie fragment must be followed by an mdat box.");
+            }
+
+            var mdat = topLevel[topIndex + 1];
+            try
+            {
+                var sequence = ParseFragmentSequence(data, moof);
+                if (previousSequence.HasValue && sequence <= previousSequence.Value)
+                {
+                    throw new Mp4FormatException("Movie fragment sequence numbers must be strictly increasing.");
+                }
+
+                previousSequence = sequence;
+                ParseMovieFragment(
+                    data,
+                    moof,
+                    mdat,
+                    trackById,
+                    defaults,
+                    decodeEnds,
+                    ref totalSamples);
+            }
+            catch (OverflowException error)
+            {
+                throw new Mp4FormatException("Movie fragment timing or data offsets exceed the supported range.", error);
+            }
+        }
+    }
+
+    private static Dictionary<uint, FragmentDefaults> ParseTrackExtendsDefaults(
+        byte[] data,
+        Box moov,
+        IDictionary<uint, ParsedTrack> trackById)
+    {
+        var mvex = FindSingle(Children(data, moov, "mvex"), "mvex");
+        var result = new Dictionary<uint, FragmentDefaults>();
+        foreach (var trex in Children(data, mvex, "trex"))
+        {
+            RequirePayload(trex, 24, "trex");
+            var trackId = U32(data, trex.PayloadStart + 4);
+            if (!trackById.ContainsKey(trackId)) continue;
+            if (result.ContainsKey(trackId))
+            {
+                throw new Mp4FormatException("The initial movie contains duplicate trex defaults for a supported track.");
+            }
+
+            var descriptionIndex = U32(data, trex.PayloadStart + 8);
+            if (descriptionIndex != 1)
+            {
+                throw new Mp4FormatException("A supported trex sample-description index must be one.");
+            }
+
+            result.Add(trackId, new FragmentDefaults(
+                U32(data, trex.PayloadStart + 12),
+                U32(data, trex.PayloadStart + 16),
+                U32(data, trex.PayloadStart + 20)));
+        }
+
+        foreach (var trackId in trackById.Keys)
+        {
+            if (!result.ContainsKey(trackId))
+            {
+                throw new Mp4FormatException("The initial movie is missing trex defaults for a supported track.");
+            }
+        }
+
+        return result;
+    }
+
+    private static uint ParseFragmentSequence(byte[] data, Box moof)
+    {
+        var mfhd = FindSingle(Children(data, moof, "mfhd"), "mfhd");
+        RequirePayload(mfhd, 8, "mfhd");
+        return U32(data, mfhd.PayloadStart + 4);
+    }
+
+    private static void ParseMovieFragment(
+        byte[] data,
+        Box moof,
+        Box mdat,
+        IDictionary<uint, ParsedTrack> trackById,
+        IDictionary<uint, FragmentDefaults> defaults,
+        IDictionary<uint, long> decodeEnds,
+        ref int totalSamples)
+    {
+        var trafs = Children(data, moof, "traf");
+        if (trafs.Count == 0 || trafs.Count > MaximumTrackFragmentsPerFragment)
+        {
+            throw new Mp4FormatException(
+                "A movie fragment has an invalid traf count or exceeds the supported limit of " +
+                MaximumTrackFragmentsPerFragment + ".");
+        }
+
+        var mappedTracks = new HashSet<uint>();
+        var ranges = new List<SampleRange>();
+        foreach (var traf in trafs)
+        {
+            var tfhd = FindSingle(Children(data, traf, "tfhd"), "tfhd");
+            var header = ParseTrackFragmentHeader(data, tfhd, moof);
+            ParsedTrack track;
+            if (!trackById.TryGetValue(header.TrackId, out track!))
+            {
+                throw new Mp4FormatException("A movie fragment references an unknown track ID.");
+            }
+
+            if (!mappedTracks.Add(header.TrackId))
+            {
+                throw new Mp4FormatException("A movie fragment maps the same supported track more than once.");
+            }
+
+            var tfdt = FindSingle(Children(data, traf, "tfdt"), "tfdt");
+            var decodeTime = ParseBaseDecodeTime(data, tfdt);
+            long priorDecodeEnd;
+            if (decodeEnds.TryGetValue(header.TrackId, out priorDecodeEnd) && decodeTime < priorDecodeEnd)
+            {
+                throw new Mp4FormatException("A movie fragment decode time regresses for track " + header.TrackId + ".");
+            }
+
+            var runs = Children(data, traf, "trun");
+            if (runs.Count == 0 || runs.Count > MaximumTrackRunsPerFragment)
+            {
+                throw new Mp4FormatException(
+                    "A track fragment has an invalid trun count or exceeds the supported limit of " +
+                    MaximumTrackRunsPerFragment + ".");
+            }
+
+            long? nextDataOffset = null;
+            foreach (var run in runs)
+            {
+                ParseTrackRun(
+                    data,
+                    moof,
+                    mdat,
+                    run,
+                    header,
+                    defaults[header.TrackId],
+                    track,
+                    ref decodeTime,
+                    ref nextDataOffset,
+                    ranges,
+                    ref totalSamples);
+            }
+
+            decodeEnds[header.TrackId] = decodeTime;
+        }
+
+        ranges.Sort((left, right) => left.Start.CompareTo(right.Start));
+        for (var index = 1; index < ranges.Count; index++)
+        {
+            if (ranges[index].Start < ranges[index - 1].End)
+            {
+                throw new Mp4FormatException("Movie fragment sample data ranges overlap.");
+            }
+        }
+    }
+
+    private static TrackFragmentHeader ParseTrackFragmentHeader(byte[] data, Box tfhd, Box moof)
+    {
+        RequirePayload(tfhd, 8, "tfhd");
+        var flags = FullBoxFlags(data, tfhd);
+        if ((flags & 0x000001) != 0 && (flags & 0x020000) != 0)
+        {
+            throw new Mp4FormatException(
+                "tfhd base-data-offset and default-base-is-moof must not both be present.");
+        }
+
+        var cursor = tfhd.PayloadStart + 4;
+        var trackId = U32(data, cursor);
+        cursor += 4;
+        long baseDataOffset;
+        if ((flags & 0x000001) != 0)
+        {
+            RequireAvailable(tfhd, cursor, 8, "tfhd base-data-offset");
+            var rawBase = U64(data, cursor);
+            if (rawBase > long.MaxValue) throw new Mp4FormatException("tfhd base-data-offset exceeds the supported range.");
+            baseDataOffset = (long)rawBase;
+            cursor += 8;
+        }
+        else if ((flags & 0x020000) != 0)
+        {
+            baseDataOffset = moof.Start;
+        }
+        else
+        {
+            throw new Mp4FormatException("tfhd must define base-data-offset or default-base-is-moof.");
+        }
+
+        if ((flags & 0x000002) != 0)
+        {
+            RequireAvailable(tfhd, cursor, 4, "tfhd sample-description-index");
+            if (U32(data, cursor) != 1) throw new Mp4FormatException("tfhd sample-description-index must be one.");
+            cursor += 4;
+        }
+
+        uint? duration = null;
+        uint? size = null;
+        uint? sampleFlags = null;
+        if ((flags & 0x000008) != 0)
+        {
+            RequireAvailable(tfhd, cursor, 4, "tfhd default duration");
+            duration = U32(data, cursor);
+            cursor += 4;
+        }
+
+        if ((flags & 0x000010) != 0)
+        {
+            RequireAvailable(tfhd, cursor, 4, "tfhd default size");
+            size = U32(data, cursor);
+            cursor += 4;
+        }
+
+        if ((flags & 0x000020) != 0)
+        {
+            RequireAvailable(tfhd, cursor, 4, "tfhd default flags");
+            sampleFlags = U32(data, cursor);
+        }
+
+        return new TrackFragmentHeader(trackId, baseDataOffset, duration, size, sampleFlags);
+    }
+
+    private static long ParseBaseDecodeTime(byte[] data, Box tfdt)
+    {
+        RequirePayload(tfdt, 8, "tfdt");
+        var version = data[tfdt.PayloadStart];
+        if (version == 0) return U32(data, tfdt.PayloadStart + 4);
+        if (version == 1)
+        {
+            RequirePayload(tfdt, 12, "tfdt");
+            var value = U64(data, tfdt.PayloadStart + 4);
+            if (value > long.MaxValue) throw new Mp4FormatException("tfdt decode time exceeds the supported range.");
+            return (long)value;
+        }
+
+        throw new Mp4FormatException("Unsupported tfdt version.");
+    }
+
+    private static void ParseTrackRun(
+        byte[] data,
+        Box moof,
+        Box mdat,
+        Box trun,
+        TrackFragmentHeader header,
+        FragmentDefaults trex,
+        ParsedTrack track,
+        ref long decodeTime,
+        ref long? nextDataOffset,
+        IList<SampleRange> ranges,
+        ref int totalSamples)
+    {
+        RequirePayload(trun, 8, "trun");
+        var version = data[trun.PayloadStart];
+        if (version != 0 && version != 1) throw new Mp4FormatException("Unsupported trun version.");
+        var flags = FullBoxFlags(data, trun);
+        var count = U32(data, trun.PayloadStart + 4);
+        if (count > MaximumSampleCount - totalSamples)
+        {
+            throw new Mp4FormatException(
+                "Fragment sample expansion exceeds the supported limit of " +
+                MaximumSampleCount + ".");
+        }
+
+        var cursor = trun.PayloadStart + 8;
+        long runDataOffset;
+        if ((flags & 0x000001) != 0)
+        {
+            RequireAvailable(trun, cursor, 4, "trun data_offset");
+            runDataOffset = checked(header.BaseDataOffset + I32(data, cursor));
+            cursor += 4;
+        }
+        else if (nextDataOffset.HasValue)
+        {
+            runDataOffset = nextDataOffset.Value;
+        }
+        else
+        {
+            runDataOffset = header.BaseDataOffset;
+        }
+
+        uint? firstSampleFlags = null;
+        if ((flags & 0x000004) != 0 && (flags & 0x000400) != 0)
+        {
+            throw new Mp4FormatException(
+                "trun first_sample_flags and per-sample flags must not both be present.");
+        }
+
+        if ((flags & 0x000004) != 0)
+        {
+            RequireAvailable(trun, cursor, 4, "trun first_sample_flags");
+            firstSampleFlags = U32(data, cursor);
+            cursor += 4;
+        }
+
+        var perSampleBytes = 0;
+        if ((flags & 0x000100) != 0) perSampleBytes += 4;
+        if ((flags & 0x000200) != 0) perSampleBytes += 4;
+        if ((flags & 0x000400) != 0) perSampleBytes += 4;
+        if ((flags & 0x000800) != 0) perSampleBytes += 4;
+        if (perSampleBytes != 0 && (long)count > (trun.End - cursor) / perSampleBytes)
+        {
+            throw new Mp4FormatException("trun sample entries exceed the box boundary.");
+        }
+
+        var sampleOffset = runDataOffset;
+        for (uint sampleIndex = 0; sampleIndex < count; sampleIndex++)
+        {
+            var duration = ResolveRunValue(data, trun, flags, 0x000100, ref cursor, header.Duration, trex.Duration, "duration");
+            var size = ResolveRunValue(data, trun, flags, 0x000200, ref cursor, header.Size, trex.Size, "size");
+            uint? inlineSampleFlags = null;
+            if ((flags & 0x000400) != 0)
+            {
+                RequireAvailable(trun, cursor, 4, "trun sample flags");
+                inlineSampleFlags = U32(data, cursor);
+                cursor += 4;
+            }
+            var sampleFlags = FragmentDefaultsResolver.ResolveFlags(
+                inlineSampleFlags,
+                firstSampleFlags,
+                sampleIndex,
+                header.SampleFlags,
+                trex.SampleFlags);
+
+            long compositionOffset = 0;
+            if ((flags & 0x000800) != 0)
+            {
+                RequireAvailable(trun, cursor, 4, "trun composition offset");
+                compositionOffset = version == 1 ? I32(data, cursor) : U32(data, cursor);
+                cursor += 4;
+            }
+
+            if (duration == 0) throw new Mp4FormatException("A fragment sample duration is unresolved or zero.");
+            if (size == 0) throw new Mp4FormatException("A fragment sample size is unresolved or zero.");
+            var sampleEnd = checked(sampleOffset + size);
+            if (sampleOffset < mdat.PayloadStart || sampleEnd > mdat.End)
+            {
+                throw new Mp4FormatException("A fragment sample range is not fully contained in its mdat payload.");
+            }
+
+            ranges.Add(new SampleRange(sampleOffset, sampleEnd));
+            var pts = checked(decodeTime + compositionOffset);
+            var keyframe = (sampleFlags & 0x00010000U) == 0;
+            track.Samples.Add(new ParsedSample(sampleOffset, size, pts, decodeTime, duration, keyframe));
+            decodeTime = checked(decodeTime + duration);
+            sampleOffset = sampleEnd;
+            totalSamples++;
+        }
+
+        nextDataOffset = sampleOffset;
+    }
+
+    private static uint ResolveRunValue(
+        byte[] data,
+        Box trun,
+        uint flags,
+        uint fieldFlag,
+        ref long cursor,
+        uint? tfhdValue,
+        uint trexValue,
+        string fieldName)
+    {
+        if ((flags & fieldFlag) != 0)
+        {
+            RequireAvailable(trun, cursor, 4, "trun sample " + fieldName);
+            var value = U32(data, cursor);
+            cursor += 4;
+            return value;
+        }
+
+        return FragmentDefaultsResolver.ResolveValue(
+            null,
+            tfhdValue,
+            trexValue == 0 ? (uint?)null : trexValue,
+            fieldName);
+    }
+
+    private static uint FullBoxFlags(byte[] data, Box box)
+    {
+        RequirePayload(box, 4, box.Type);
+        var offset = box.PayloadStart + 1;
+        return ((uint)data[offset] << 16) | ((uint)data[offset + 1] << 8) | data[offset + 2];
+    }
+
+    private static void RequireAvailable(Box box, long cursor, int bytes, string field)
+    {
+        if (cursor < box.PayloadStart || cursor > box.End - bytes)
+        {
+            throw new Mp4FormatException(field + " exceeds its box boundary.");
+        }
     }
 
     private static SampleDescription ParseSampleDescription(byte[] data, Box stsd, string handlerType)
@@ -446,10 +939,24 @@ public sealed class Mp4Reader : IDisposable
 
     private static long ParseTimescale(byte[] data, Box mdhd)
     {
-        RequirePayload(mdhd, 20, "mdhd");
+        RequirePayload(mdhd, 4, "mdhd");
         var version = data[mdhd.PayloadStart];
-        var offset = version == 1 ? mdhd.PayloadStart + 20 : mdhd.PayloadStart + 12;
-        if (version != 0 && version != 1) throw new Mp4FormatException("Unsupported mdhd version.");
+        long offset;
+        if (version == 0)
+        {
+            RequirePayload(mdhd, 16, "mdhd");
+            offset = mdhd.PayloadStart + 12;
+        }
+        else if (version == 1)
+        {
+            RequirePayload(mdhd, 24, "mdhd");
+            offset = mdhd.PayloadStart + 20;
+        }
+        else
+        {
+            throw new Mp4FormatException("Unsupported mdhd version.");
+        }
+
         return U32(data, offset);
     }
 
@@ -693,9 +1200,9 @@ public sealed class Mp4Reader : IDisposable
     {
         return new EncodedVideoNalUnit(
             nal,
-            MediaTime.FromTicks(sample.Pts, track.Timescale),
-            MediaTime.FromTicks(sample.Dts, track.Timescale),
-            MediaTime.FromTicks(sample.Duration, track.Timescale),
+            MediaTime.FromTicksRounded(sample.Pts, track.Timescale),
+            MediaTime.FromTicksRounded(sample.Dts, track.Timescale),
+            MediaTime.FromTicksRounded(sample.Duration, track.Timescale),
             sample.IsKeyFrame);
     }
 
@@ -703,9 +1210,9 @@ public sealed class Mp4Reader : IDisposable
     {
         return new EncodedAudioSample(
             Slice(track.Data, sample.Offset, checked((int)sample.Size)),
-            MediaTime.FromTicks(sample.Pts, track.Timescale),
-            MediaTime.FromTicks(sample.Dts, track.Timescale),
-            MediaTime.FromTicks(sample.Duration, track.Timescale));
+            MediaTime.FromTicksRounded(sample.Pts, track.Timescale),
+            MediaTime.FromTicksRounded(sample.Dts, track.Timescale),
+            MediaTime.FromTicksRounded(sample.Duration, track.Timescale));
     }
 
     private static int CompareTime(long left, int leftScale, long right, int rightScale)
@@ -902,9 +1409,10 @@ public sealed class Mp4Reader : IDisposable
 
     private sealed class ParsedTrack
     {
-        public ParsedTrack(byte[] data, string handlerType, long timescale, VideoCodecConfiguration? videoConfiguration, AacCodecConfiguration? audioConfiguration, IList<ParsedSample> samples)
+        public ParsedTrack(byte[] data, uint trackId, string handlerType, long timescale, VideoCodecConfiguration? videoConfiguration, AacCodecConfiguration? audioConfiguration, IList<ParsedSample> samples)
         {
             Data = data;
+            TrackId = trackId;
             HandlerType = handlerType;
             Timescale = checked((int)timescale);
             VideoConfiguration = videoConfiguration;
@@ -912,6 +1420,7 @@ public sealed class Mp4Reader : IDisposable
             Samples = samples;
         }
 
+        public uint TrackId { get; }
         public string HandlerType { get; }
         public int Timescale { get; }
         public VideoCodecConfiguration? VideoConfiguration { get; }
@@ -962,6 +1471,55 @@ public sealed class Mp4Reader : IDisposable
 
         public int FirstChunk { get; }
         public uint SamplesPerChunk { get; }
+    }
+
+    private sealed class FragmentDefaults
+    {
+        public FragmentDefaults(uint duration, uint size, uint sampleFlags)
+        {
+            Duration = duration;
+            Size = size;
+            SampleFlags = sampleFlags;
+        }
+
+        public uint Duration { get; }
+        public uint Size { get; }
+        public uint SampleFlags { get; }
+    }
+
+    private sealed class TrackFragmentHeader
+    {
+        public TrackFragmentHeader(
+            uint trackId,
+            long baseDataOffset,
+            uint? duration,
+            uint? size,
+            uint? sampleFlags)
+        {
+            TrackId = trackId;
+            BaseDataOffset = baseDataOffset;
+            Duration = duration;
+            Size = size;
+            SampleFlags = sampleFlags;
+        }
+
+        public uint TrackId { get; }
+        public long BaseDataOffset { get; }
+        public uint? Duration { get; }
+        public uint? Size { get; }
+        public uint? SampleFlags { get; }
+    }
+
+    private readonly struct SampleRange
+    {
+        public SampleRange(long start, long end)
+        {
+            Start = start;
+            End = end;
+        }
+
+        public long Start { get; }
+        public long End { get; }
     }
 
     private readonly struct DescriptorRange

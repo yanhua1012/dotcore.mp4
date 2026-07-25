@@ -4,26 +4,44 @@
 
 ## 支援範圍
 
-- `Mp4Writer` 產生 progressive、非 fragmented MP4，支援單一 H.264 或 H.265 視訊軌，以及單一 AAC 音訊軌。
+- `Mp4Writer` 支援 progressive、faststart 與 fragmented 三種 layout，且都支援單一 H.264 或 H.265 視訊軌及單一 AAC 音訊軌。舊有 `Mp4Writer(Stream, bool)` 維持 progressive 預設。
 - H.264 必須提供 SPS/PPS；H.265 必須提供 VPS/SPS/PPS；writer 會分別寫入 `avcC`/`hvcC`。
 - Parameter sets 必須各自只含一個正確類型的 NAL unit：H.264 SPS/PPS 為 type 7/8，H.265 VPS/SPS/PPS 為 type 32/33/34；錯誤標示會在寫入前拒絕。
 - AAC 必須提供與 sample rate、channel configuration 一致的 AudioSpecificConfig；不會從 ADTS header 猜測設定。
 - 同一 PTS/DTS 的連續 video NAL units 會聚合成一個 MP4 sample；reader 會再依原始順序逐 NAL 發出事件。AAC access unit 一個對應一個 MP4 sample。
-- 時間戳公開為 `TimeSpan`，MP4 track timescale 使用 10,000,000，因此不需要靜默捨入。
+- writer 時間戳公開為 `TimeSpan`，內建產物的 MP4 track timescale 使用 10,000,000，因此 writer 不接受無法精確換算的時間。reader 遇到 FFmpeg 常見的其他 timescale 時，會以 deterministic nearest-tick 規則還原至 100 ns `TimeSpan` 精度。
 
 ## Stream 與例外語意
 
-writer 的輸出 stream 必須同時 `CanWrite`、`CanSeek`；reader 的輸入 stream 必須同時 `CanRead`、`CanSeek`。兩者預設不會關閉 caller-owned stream，可用建構子的 `leaveOpen: false` 明確交由元件關閉。writer 必須呼叫 `FinalizeFile()`（或 `Complete()`/`Finish()`）才會 backpatch `mdat` 並寫入 `moov`。
+writer 的 stream 契約依 mode 不同：
+
+| Mode | Stream capability | Top-level layout | 使用時機 |
+| --- | --- | --- | --- |
+| `Progressive` | `CanWrite` + `CanSeek` | `ftyp`、`mdat`、`moov` | 向後相容的預設完整檔案 |
+| `FastStart` | `CanRead` + `CanWrite` + `CanSeek` + `SetLength` | `ftyp`、`moov`、`mdat` | 完成後可由檔頭取得 metadata 的快速起播檔案 |
+| `Fragmented` | 僅需 `CanWrite` | initial `ftyp`/`moov`，後接 `moof`/`mdat` | 依 keyframe 持續提交已完成 fragments |
+
+兩端預設都不會關閉 caller-owned stream，可用建構子的 `leaveOpen: false` 明確交由元件關閉。writer 必須呼叫 `FinalizeFile()`（或 `Complete()`/`Finish()`）完成最後 metadata/fragment；成功完成後重複呼叫是 idempotent。
+
+Faststart 在 finalization 時以固定 64 KiB buffer 向後搬移既有 `mdat`，不會把完整 payload 載入 managed memory。只有完成且成功關閉的檔案才保證 `moov` 位於 `mdat` 前；它不是錄影進行中的 live playback 保證。若需要原子交付，請寫入 temporary path，完成後再 rename。
+
+Fragmented mode 在第一個 media sample 時凍結 codec tracks，要求至少有 video configuration，且第一個 video access unit 必須是 keyframe。跨 video/audio 的提交 DTS 必須全域非遞減（同 DTS 合法），下一個 video keyframe 會開始新 fragment。`MaximumFragmentBufferBytes` 預設 16 MiB，長 GOP 超限會明確失敗，不會自動切出 non-keyframe fragment；第一版不支援 audio-only fragmented output。
 
 輸入資料、codec parameter sets、duration 和時間戳會在 API 邊界驗證。減少的 DTS、無法精確轉換的時間、malformed MP4 box、超出 sample 邊界的 NAL length、unsupported codec 或不一致 sample table 會以 `Mp4TimestampException` 或 `Mp4FormatException` 明確失敗；reader 不會靜默跳過媒體。
 
-Reader 會先將完整 MP4 snapshot 至 managed memory，單一輸入上限為 256 MiB。每軌最多 1,000,000 samples，各 sample table 最多 1,000,000 entries；每個 container 最多 100,000 boxes。MPEG-4 descriptor nesting 最深 32 層且最多走訪 4,096 個 descriptors。超出任一限制會在大額配置或展開前以 `Mp4FormatException` 拒絕。
+Reader 會在建構時將完整 MP4 snapshot 至 managed memory，不會 tail-follow 持續成長中的 fMP4。單一輸入上限為 256 MiB，累積最多 1,000,000 samples，各 sample table 最多 1,000,000 entries，每個 container 最多 100,000 boxes，另限制 4,096 fragments、每 fragment 1,024 `traf` 與 4,096 `trun`。MPEG-4 descriptor nesting 最深 32 層且最多走訪 4,096 個 descriptors。超出限制、fragment sequence/timeline 倒退、sample overlap 或 range 不在對應 `mdat` 內，都會在大額配置或 payload delivery 前以 `Mp4FormatException` 拒絕。
 
 基本使用方式：
 
 ```csharp
 using var output = File.Create("recording.mp4");
-using var writer = new Mp4Writer(output);
+using var writer = new Mp4Writer(
+    output,
+    new Mp4WriterOptions
+    {
+        Mode = Mp4WriteMode.Fragmented,
+        MaximumFragmentBufferBytes = 16 * 1024 * 1024
+    });
 writer.SetVideoCodecConfiguration(videoConfiguration);
 writer.SetAudioCodecConfiguration(aacConfiguration);
 writer.WriteVideoNalUnit(new EncodedVideoNalUnit(nal, pts, dts, duration, isKeyFrame));
@@ -44,16 +62,23 @@ reader.Read();
 ```bash
 dotnet restore DotCore.Mp4.sln /p:RestoreFallbackFolders= /p:RestorePackagesPath=/root/.nuget/packages
 dotnet build DotCore.Mp4.sln --no-restore /p:BuildProjectReferences=false /p:DisableFastUpToDateCheck=true
-dotnet test DotCore.Mp4.sln --no-restore /p:BuildProjectReferences=false /p:DisableFastUpToDateCheck=true
+dotnet test tests/DotCore.Mp4.Tests/DotCore.Mp4.Tests.csproj --no-restore --logger "console;verbosity=minimal"
+dotnet test tests/DotCore.Mp4.IntegrationTests/DotCore.Mp4.IntegrationTests.csproj --no-restore --logger "console;verbosity=minimal"
+dotnet test DotCore.Mp4.sln --no-restore /p:BuildProjectReferences=false /p:DisableFastUpToDateCheck=true --logger "console;verbosity=minimal"
 ```
 
 Console demo：
 
 ```bash
 dotnet build samples/DotCore.Mp4.Console/DotCore.Mp4.Console.csproj --no-restore /p:BuildProjectReferences=false /p:DisableFastUpToDateCheck=true
-dotnet run --project samples/DotCore.Mp4.Console/DotCore.Mp4.Console.csproj --no-build -- /tmp/dotcore-demo.mp4
-ffprobe -v error -show_format -show_streams -of json /tmp/dotcore-demo.mp4
-ffmpeg -v error -i /tmp/dotcore-demo.mp4 -map 0 -f null -
+dotnet run --project samples/DotCore.Mp4.Console/DotCore.Mp4.Console.csproj --no-build -- /tmp/dotcore-progressive.mp4
+dotnet run --project samples/DotCore.Mp4.Console/DotCore.Mp4.Console.csproj --no-build -- /tmp/dotcore-faststart.mp4 faststart
+dotnet run --project samples/DotCore.Mp4.Console/DotCore.Mp4.Console.csproj --no-build -- /tmp/dotcore-fragmented.mp4 fragmented
+
+ffprobe -v error -show_format -show_streams -of json /tmp/dotcore-fragmented.mp4
+ffmpeg -v error -i /tmp/dotcore-fragmented.mp4 -map 0 -f null -
 ```
 
-unit tests 不呼叫外部工具；integration tests 會建立固定的合法 H.264/AAC 與 H.265/AAC fixtures，透過 public writer/reader round-trip，並對每個輸出 fixture 執行 `ffprobe -show_format -show_streams` 與 `ffmpeg -v error -i <file> -map 0 -f null -`。工具不存在時測試會明確標示缺少的 executable，而不宣稱 interoperability 已通過。
+只提供 output path 的既有 Console invocation 仍使用 progressive；第二參數可明確指定 `progressive`、`faststart` 或 `fragmented`。未知 mode 會顯示 usage、以非零 exit code 結束，且不建立被宣稱成功的 output。
+
+unit tests 不呼叫外部工具；integration tests 會建立固定的合法 keyframe→non-keyframe→keyframe H.264/AAC 與 H.265/AAC fixtures，對六種 codec/layout 組合執行 public writer/reader round-trip、`ffprobe` 與 `ffmpeg -v error`，並讓 public reader 反向解析 FFmpeg 產生的 `empty_moov + default_base_moof + frag_keyframe` reference files。工具不存在時測試會明確標示缺少的 executable，而不宣稱 interoperability 已通過。

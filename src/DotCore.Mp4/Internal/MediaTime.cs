@@ -76,4 +76,27 @@ internal static class MediaTime
             throw new Mp4FormatException("The MP4 timestamp is outside the representable TimeSpan range.", ex);
         }
     }
+
+    public static TimeSpan FromTicksRounded(long value, int timescale)
+    {
+        if (timescale <= 0) throw new Mp4FormatException("The MP4 timescale must be positive.");
+        try
+        {
+            var seconds = value / timescale;
+            var remainder = value % timescale;
+            var scaledRemainder = checked(remainder * (long)TimeSpan.TicksPerSecond);
+            var ticks = checked(seconds * TimeSpan.TicksPerSecond + scaledRemainder / timescale);
+            var fractional = scaledRemainder % timescale;
+            if (fractional != 0 && Math.Abs(fractional) * 2 >= timescale)
+            {
+                ticks = checked(ticks + (fractional > 0 ? 1 : -1));
+            }
+
+            return new TimeSpan(ticks);
+        }
+        catch (OverflowException error)
+        {
+            throw new Mp4FormatException("The MP4 timestamp is outside the representable TimeSpan range.", error);
+        }
+    }
 }

@@ -191,3 +191,71 @@
 - Created proposal, design, three delta specs, and a 45-item tests-first task checklist.
 - `openspec status --change add-faststart-fragmented-mp4` — 4/4 artifacts complete and apply-ready.
 - `openspec validate add-faststart-fragmented-mp4 --strict --json` — passed, 1/1 change valid.
+
+# 2026-07-25 Implement `add-faststart-fragmented-mp4`
+
+## Acceptance criteria
+
+- [ ] Existing `Mp4Writer(Stream, bool)` remains progressive and preserves public ownership/error behavior.
+- [ ] Explicit progressive, faststart, and fragmented modes satisfy their stream, layout, timing, buffering, and idempotent-finalization contracts.
+- [ ] `Mp4Reader` restores equivalent codec, payload, timing, and keyframe events from all three layouts and fails loudly on malformed/resource-exhausting fragments.
+- [ ] Unit, integration, Console, `ffprobe`, `ffmpeg`, OpenSpec strict validation, and diff checks produce non-zero, reproducible evidence.
+- [ ] README documents usage, constraints, rollout, and rollback.
+
+## Checkpoints
+
+- [x] A — inspect repository, capture test-discovery baseline, and establish the verification loop.
+- [x] B1 — implement and verify public options plus layout-specific stream contracts (OpenSpec 1.1–1.5).
+- [x] B2 — implement and verify faststart writer/round-trip (OpenSpec 2.1–2.6).
+- [x] B3 — implement and verify fragmented writer boxes/lifecycle (OpenSpec 3.1–4.7).
+- [x] C1 — implement and verify fragmented reader metadata/timing/guards (OpenSpec 5.1–6.7).
+- [x] C2 — implement and verify integration matrix, FFmpeg references, and Console (OpenSpec 7.1–7.6).
+- [x] D — documentation, security/compatibility review, full serialized verification, and scope review (OpenSpec 8.1–8.6).
+
+## Risk and rollback
+
+- Risk level: medium; new layouts and hostile-input parsing expand format behavior, but writer modes are opt-in.
+- Affected components: public writer options, writer/reader internals, tests, Console, README, and OpenSpec task state.
+- Rollback: revert new options/mode/parser code and related tests/docs; no data migration exists and the legacy progressive constructor remains the compatibility path.
+- Monitoring signals: actionable writer capability/order/buffer exceptions and reader `Mp4FormatException` diagnostics; external `ffprobe`/`ffmpeg` validation.
+
+## Dependencies and environment
+
+- Production target remains `netstandard2.0`; tests and Console target .NET 10.
+- Restore in this mounted checkout uses `/p:RestoreFallbackFolders=` and a writable NuGet packages path when required.
+- `ffprobe` and `ffmpeg` must resolve from `PATH`; they are test/demo prerequisites only.
+- Existing untracked `.vs/` content belongs to the user and remains untouched.
+
+## Working notes
+
+- Source of truth: repo-local OpenSpec change `add-faststart-fragmented-mp4`, schema `spec-driven`, 45 tasks.
+- Default progressive behavior, public sample/events, managed-only production dependencies, caller stream ownership, and the 256 MiB reader snapshot limit are invariants.
+- Fragmented mode requires video, first-keyframe start, globally non-decreasing cross-track DTS, bounded one-fragment buffering, and completed-snapshot reader semantics.
+- Any reported task/test/scenario count must come from CLI or `rg`, not manual counting.
+
+## Results
+
+- Baseline before explicit test-project markers: standard `dotnet test DotCore.Mp4.sln` already discovered and passed 30 unit + 5 integration tests; the planned zero-output false green was not reproducible in this checkout.
+- Added explicit `<IsTestProject>true</IsTestProject>` to both xUnit projects.
+- Post-change `dotnet test DotCore.Mp4.sln --no-restore --logger "console;verbosity=minimal"` passed 30 unit + 5 integration tests, 0 skipped.
+- Public mode/options failing baseline: targeted tests failed to compile because `Mp4WriteMode` did not exist.
+- Public contract implementation: targeted writer mode tests passed 13/13; complete unit suite passed 43/43, 0 skipped.
+- Faststart failing baseline: targeted tests failed to compile because the offset/convergence helper did not exist.
+- Faststart implementation: bounded 64 KiB backward relocation, stable moov offset recalculation, `stco/co64` promotion, diagnostic relocation failure, H.264/H.265+Aac reader round-trip, and idempotent completion; full unit suite passed 49/49.
+- Fragmented writer failing baseline: all 7 box/lifecycle/resource tests failed against the placeholder mode path.
+- Fragmented writer implementation: initial empty-table `moov`/`mvex`, keyframe-aligned `moof`/`mdat`, explicit timing/flags/offsets, track freeze, global DTS guard, bounded buffering, and non-seekable sequential output; targeted tests passed 7/7 and full unit suite passed 56/56.
+- Fragmented reader implementation: track-ID/`trex` context, checked `tfhd/tfdt/trun` parsing, cross-track merge, signed composition offsets, `mdat` containment, overlap/sequence/timeline checks, and explicit fragment/traf/trun/sample limits; full unit suite passed 75/75.
+- Remaining reader metadata gap before checkpoint completion: add direct multiple-`trun` continuation coverage (OpenSpec 5.2), then close 5.4.
+- Added deterministic FFmpeg 6.1.1 H.264/H.265 key/non-key/key fixtures with recorded encoder settings and DTS-interleaved AAC submission.
+- Integration matrix covers 6 generated codec/layout combinations plus 2 FFmpeg-generated fragmented references; targeted integration passed 14/14.
+- FFmpeg AAC timescale evidence required deterministic reader-side rounding to the nearest 100 ns tick; writer input conversion remains exact-only, and reverse timing differs by at most one `TimeSpan` tick after FFmpeg rescaling.
+- Direct two-`trun` continuation and default precedence/first-sample-flags tests close the reader metadata gap.
+- Console failing baseline: all 5 mode/compatibility/error smoke cases failed against the one-mode sample.
+- Console now preserves output-path-only progressive behavior, supports three explicit modes, interleaves a fixed GOP with AAC, prints parsed reader events, and rejects unknown modes; smoke tests passed 5/5.
+- README documents all three layouts, stream contracts, faststart completion semantics, fragmented ordering/buffering constraints, snapshot/resource limits, Console commands, and non-zero test discovery commands.
+- Public API review: new mode/options/constructor members have Traditional Chinese XML documentation; production remains `netstandard2.0`, managed-only, and has no added package/native/runtime dependency.
+- Security/resource review added checked offset/timing math, explicit fragment/traf/trun/sample limits, `mdat` containment/overlap checks, strict truncated metadata bounds, mutually-exclusive flag validation, and fail-loudly regression tests; no payload or secret logging was introduced.
+- Serialized verification: restore passed; solution build passed with 0 warnings/0 errors; unit 77/77 and integration 19/19 passed with 0 skipped; solution-level test discovered and passed both non-zero projects.
+- Console progressive, faststart, and fragmented each printed public-reader H.264/AAC codec data plus 3 video/4 audio events; per-file `ffprobe` identified H.264+Aac MP4 and `ffmpeg -v error` exited 0 without diagnostics.
+- `openspec validate add-faststart-fragmented-mp4 --strict --json` passed 1/1; `git diff --check` passed.
+- Final scope: changes are limited to writer/reader modes and internals, their tests/fixtures, Console, README, explicit test discovery, OpenSpec checklist, and audit notes. Rollout is caller opt-in for new modes; rollback reverts new modes/parser and leaves the legacy progressive format without migration.
