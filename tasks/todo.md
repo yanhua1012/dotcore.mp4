@@ -258,6 +258,49 @@
 - Serialized verification: restore passed; solution build passed with 0 warnings/0 errors; unit 77/77 and integration 19/19 passed with 0 skipped; solution-level test discovered and passed both non-zero projects.
 - Console progressive, faststart, and fragmented each printed public-reader H.264/AAC codec data plus 3 video/4 audio events; per-file `ffprobe` identified H.264+Aac MP4 and `ffmpeg -v error` exited 0 without diagnostics.
 - `openspec validate add-faststart-fragmented-mp4 --strict --json` passed 1/1; `git diff --check` passed.
+
+# 2026-07-26 Archive `add-faststart-fragmented-mp4`
+
+## Acceptance criteria
+
+- [x] The selected change uses the repo-local `spec-driven` schema and all artifacts are complete.
+- [x] All implementation tasks are checked with machine-counted evidence.
+- [x] Delta specs are assessed against all corresponding main specs and synchronized by explicit user choice.
+- [x] The change is moved to `openspec/changes/archive/2026-07-26-add-faststart-fragmented-mp4`.
+- [x] OpenSpec reports no active changes and strict validation passes after archival.
+
+## Checkpoints
+
+- [x] A — inspect repository state, lessons, artifact graph, and task completion.
+- [x] B — compare delta specs with main specs and synchronize them into main specs.
+- [x] C — archive the change and verify the resulting OpenSpec state.
+
+## Risk and rollback
+
+- Risk level: low; archival moves completed planning artifacts, with main-spec edits only if synchronization is required and approved.
+- Affected components: repo-local OpenSpec change and possibly the three corresponding main specs.
+- Rollback: move the dated archive directory back to `openspec/changes/add-faststart-fragmented-mp4`; revert only any main-spec synchronization performed in this archive step.
+
+## Dependencies and environment
+
+- OpenSpec CLI with nearest repo-local root `/mnt/c/SourceRepository/PublicGitHub/dotcore.mp4`.
+- Archive schema: `spec-driven`.
+
+## Working notes
+
+- Artifact status: proposal, design, specs, and tasks are all `done`.
+- Task checklist: 51 checked, 0 unchecked.
+- Delta capabilities: `mp4-component-verification`, `mp4-stream-demuxing`, and `mp4-stream-muxing`.
+- Sync assessment: all three main specs still contain the earlier contracts; the deltas have substantive modifications and additions, no removals or renames, and must preserve unchanged muxing ingestion requirements during merge.
+
+## Results
+
+- Synchronized 16 delta requirement blocks across all three capabilities: 9 modified and 7 added, with no removals or renames.
+- Preserved the unchanged muxing requirements for Video codec configuration and NAL ingestion and AAC ingestion and configuration.
+- Normalized requirement comparison matched 16/16 delta blocks; pre-archive `openspec validate --all --strict --json --no-interactive` passed 4/4 items.
+- Archived to `openspec/changes/archive/2026-07-26-add-faststart-fragmented-mp4`; `.openspec.yaml` is preserved and the archived checklist contains 51 checked, 0 unchecked tasks.
+- Post-archive `openspec list --json` reports no active changes; strict validation passes 3/3 main specs.
+- `git diff --check` passed.
 - Final scope: changes are limited to writer/reader modes and internals, their tests/fixtures, Console, README, explicit test discovery, OpenSpec checklist, and audit notes. Rollout is caller opt-in for new modes; rollback reverts new modes/parser and leaves the legacy progressive format without migration.
 
 # 2026-07-25 Verify `add-faststart-fragmented-mp4`
