@@ -75,9 +75,9 @@ Reader 接受本元件產生的 constrained profile，並涵蓋 FFmpeg 常見的
 
 ### Console 與驗證以三模式矩陣提供可觀察證據
 
-Console 保留第一個 positional argument 為 output path，新增第二個可選 mode：`progressive`、`faststart` 或 `fragmented`；省略時仍為 progressive。無效 mode 以 usage 與非零 exit code 明確失敗。範例使用至少包含 keyframe、non-keyframe、下一個 keyframe 的固定合法 GOP，依 fragmented mode 所需的跨軌 DTS 順序提交 samples，完成後以 `Mp4Reader` 重新讀取並印出選定 mode、codec configuration、NAL/AAC timestamps 與 keyframe 狀態。
+Console 保留第一個 positional argument 為 output path，新增第二個可選 mode：`progressive`、`faststart` 或 `fragmented`；省略時仍為 progressive。第三個可選 codec 為 `h264` 或 `h265`，省略時維持 H.264。無效 mode 或 codec 以 usage 與非零 exit code 明確失敗。範例為兩種 codec 使用至少包含 keyframe、non-keyframe、下一個 keyframe 的固定合法 GOP，依 fragmented mode 所需的跨軌 DTS 順序提交 samples，完成後以 `Mp4Reader` 重新讀取並印出選定 mode、codec configuration、NAL/AAC timestamps 與 keyframe 狀態。
 
-Unit tests 驗證 public options、stream capability、box order、offset fixed point、fragment box/default/flags/timing/data ranges、buffer/order guards 與 malformed reader inputs，不呼叫外部工具。Integration tests 對 H.264/AAC 與 H.265/AAC 執行三模式 round-trip，使用 `ffprobe`/`ffmpeg` 驗證所有生成 layout，並以 FFmpeg 產生 reference fMP4 交由本元件 reader 解析。Console smoke tests 執行三種 mode。
+Unit tests 驗證 public options、stream capability、box order、offset fixed point、fragment box/default/flags/timing/data ranges、buffer/order guards 與 malformed reader inputs，不呼叫外部工具。Integration tests 對 H.264/AAC 與 H.265/AAC 執行三模式 round-trip，使用 `ffprobe`/`ffmpeg` 驗證所有生成 layout，並以 FFmpeg 產生 reference fMP4 交由本元件 reader 解析。Console smoke tests 執行兩種 codec 的三模式矩陣。
 
 兩個 xUnit project 明確設定 `IsTestProject=true`。標準 solution-level `dotnet test` 必須回報非零 discovered/executed test count；空輸出或零測試不視為成功。
 

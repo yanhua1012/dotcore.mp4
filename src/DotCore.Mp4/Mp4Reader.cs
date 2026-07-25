@@ -16,7 +16,7 @@ public sealed class Mp4Reader : IDisposable
     internal const int MaximumTrackRunsPerFragment = 4_096;
     private const int MaximumTableEntryCount = 1_000_000;
     private const int MaximumDescriptorCount = 4_096;
-    private const int MaximumBoxesPerContainer = 100_000;
+    internal const int MaximumBoxesPerContainer = 100_000;
 
     private readonly Stream _input;
     private readonly bool _leaveOpen;
@@ -178,7 +178,13 @@ public sealed class Mp4Reader : IDisposable
 
     private static IList<ParsedTrack> ParseTracks(byte[] data)
     {
-        var topLevel = ReadBoxes(data, 0, data.Length);
+        var topLevel = ReadBoxes(
+            data,
+            0,
+            data.Length,
+            "moof",
+            MaximumFragmentCount,
+            "MP4 fragment count exceeds the supported limit of " + MaximumFragmentCount + ".");
         var moov = FindSingle(topLevel, "moov");
         var trackBoxes = Children(data, moov, "trak");
         ValidateSupportedTrackMultiplicity(data, trackBoxes);
@@ -197,13 +203,6 @@ public sealed class Mp4Reader : IDisposable
         }
 
         if (fragments.Count == 0) return tracks;
-        if (fragments.Count > MaximumFragmentCount)
-        {
-            throw new Mp4FormatException(
-                "MP4 fragment count exceeds the supported limit of " +
-                MaximumFragmentCount + ".");
-        }
-
         foreach (var track in tracks)
         {
             if (track.Samples.Count != 0)
@@ -369,7 +368,15 @@ public sealed class Mp4Reader : IDisposable
             var mdat = topLevel[topIndex + 1];
             try
             {
-                var sequence = ParseFragmentSequence(data, moof);
+                var moofChildren = ReadBoxes(
+                    data,
+                    moof.PayloadStart,
+                    moof.End,
+                    "traf",
+                    MaximumTrackFragmentsPerFragment,
+                    "A movie fragment traf count exceeds the supported limit of " +
+                    MaximumTrackFragmentsPerFragment + ".");
+                var sequence = ParseFragmentSequence(data, moofChildren);
                 if (previousSequence.HasValue && sequence <= previousSequence.Value)
                 {
                     throw new Mp4FormatException("Movie fragment sequence numbers must be strictly increasing.");
@@ -380,6 +387,7 @@ public sealed class Mp4Reader : IDisposable
                     data,
                     moof,
                     mdat,
+                    moofChildren,
                     trackById,
                     defaults,
                     decodeEnds,
@@ -432,9 +440,9 @@ public sealed class Mp4Reader : IDisposable
         return result;
     }
 
-    private static uint ParseFragmentSequence(byte[] data, Box moof)
+    private static uint ParseFragmentSequence(byte[] data, IList<Box> moofChildren)
     {
-        var mfhd = FindSingle(Children(data, moof, "mfhd"), "mfhd");
+        var mfhd = FindSingle(moofChildren, "mfhd");
         RequirePayload(mfhd, 8, "mfhd");
         return U32(data, mfhd.PayloadStart + 4);
     }
@@ -443,24 +451,32 @@ public sealed class Mp4Reader : IDisposable
         byte[] data,
         Box moof,
         Box mdat,
+        IList<Box> moofChildren,
         IDictionary<uint, ParsedTrack> trackById,
         IDictionary<uint, FragmentDefaults> defaults,
         IDictionary<uint, long> decodeEnds,
         ref int totalSamples)
     {
-        var trafs = Children(data, moof, "traf");
-        if (trafs.Count == 0 || trafs.Count > MaximumTrackFragmentsPerFragment)
+        var trafs = FilterBoxes(moofChildren, "traf");
+        if (trafs.Count == 0)
         {
             throw new Mp4FormatException(
-                "A movie fragment has an invalid traf count or exceeds the supported limit of " +
-                MaximumTrackFragmentsPerFragment + ".");
+                "A movie fragment must contain at least one traf box.");
         }
 
         var mappedTracks = new HashSet<uint>();
         var ranges = new List<SampleRange>();
         foreach (var traf in trafs)
         {
-            var tfhd = FindSingle(Children(data, traf, "tfhd"), "tfhd");
+            var trafChildren = ReadBoxes(
+                data,
+                traf.PayloadStart,
+                traf.End,
+                "trun",
+                MaximumTrackRunsPerFragment,
+                "A track fragment trun count exceeds the supported limit of " +
+                MaximumTrackRunsPerFragment + ".");
+            var tfhd = FindSingle(trafChildren, "tfhd");
             var header = ParseTrackFragmentHeader(data, tfhd, moof);
             ParsedTrack track;
             if (!trackById.TryGetValue(header.TrackId, out track!))
@@ -473,7 +489,7 @@ public sealed class Mp4Reader : IDisposable
                 throw new Mp4FormatException("A movie fragment maps the same supported track more than once.");
             }
 
-            var tfdt = FindSingle(Children(data, traf, "tfdt"), "tfdt");
+            var tfdt = FindSingle(trafChildren, "tfdt");
             var decodeTime = ParseBaseDecodeTime(data, tfdt);
             long priorDecodeEnd;
             if (decodeEnds.TryGetValue(header.TrackId, out priorDecodeEnd) && decodeTime < priorDecodeEnd)
@@ -481,12 +497,10 @@ public sealed class Mp4Reader : IDisposable
                 throw new Mp4FormatException("A movie fragment decode time regresses for track " + header.TrackId + ".");
             }
 
-            var runs = Children(data, traf, "trun");
-            if (runs.Count == 0 || runs.Count > MaximumTrackRunsPerFragment)
+            var runs = FilterBoxes(trafChildren, "trun");
+            if (runs.Count == 0)
             {
-                throw new Mp4FormatException(
-                    "A track fragment has an invalid trun count or exceeds the supported limit of " +
-                    MaximumTrackRunsPerFragment + ".");
+                throw new Mp4FormatException("A track fragment must contain at least one trun box.");
             }
 
             long? nextDataOffset = null;
@@ -1225,8 +1239,13 @@ public sealed class Mp4Reader : IDisposable
     private static IList<Box> Children(byte[] data, Box parent, string requiredType)
     {
         var children = ReadBoxes(data, parent.PayloadStart, parent.End);
+        return FilterBoxes(children, requiredType);
+    }
+
+    private static IList<Box> FilterBoxes(IList<Box> boxes, string requiredType)
+    {
         var result = new List<Box>();
-        foreach (var child in children) if (child.Type == requiredType) result.Add(child);
+        foreach (var box in boxes) if (box.Type == requiredType) result.Add(box);
         return result;
     }
 
@@ -1252,8 +1271,20 @@ public sealed class Mp4Reader : IDisposable
 
     private static IList<Box> ReadBoxes(byte[] data, long start, long end)
     {
+        return ReadBoxes(data, start, end, null, 0, null);
+    }
+
+    private static IList<Box> ReadBoxes(
+        byte[] data,
+        long start,
+        long end,
+        string? countedType,
+        int maximumCount,
+        string? limitMessage)
+    {
         if (start < 0 || end < start || end > data.LongLength) throw new Mp4FormatException("An MP4 box range is outside the stream boundary.");
         var result = new List<Box>();
+        var counted = 0;
         var cursor = start;
         while (cursor < end)
         {
@@ -1287,6 +1318,15 @@ public sealed class Mp4Reader : IDisposable
             }
 
             if (size < header || size > end - cursor) throw new Mp4FormatException("An MP4 box length exceeds its parent boundary.");
+            if (countedType != null && type == countedType)
+            {
+                counted++;
+                if (counted > maximumCount)
+                {
+                    throw new Mp4FormatException(limitMessage ?? "An MP4 box type exceeds its supported count.");
+                }
+            }
+
             result.Add(new Box(cursor, size, header, type));
             cursor += size;
         }

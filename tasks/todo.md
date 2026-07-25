@@ -259,3 +259,98 @@
 - Console progressive, faststart, and fragmented each printed public-reader H.264/AAC codec data plus 3 video/4 audio events; per-file `ffprobe` identified H.264+Aac MP4 and `ffmpeg -v error` exited 0 without diagnostics.
 - `openspec validate add-faststart-fragmented-mp4 --strict --json` passed 1/1; `git diff --check` passed.
 - Final scope: changes are limited to writer/reader modes and internals, their tests/fixtures, Console, README, explicit test discovery, OpenSpec checklist, and audit notes. Rollout is caller opt-in for new modes; rollback reverts new modes/parser and leaves the legacy progressive format without migration.
+
+# 2026-07-25 Verify `add-faststart-fragmented-mp4`
+
+## Acceptance criteria
+
+- [x] All 45 implementation tasks are objectively complete in the current checkout.
+- [ ] All 16 requirements and 44 scenarios map to implementation and regression-test evidence.
+- [ ] Implementation follows the documented design and existing repository patterns without material divergence.
+- [x] OpenSpec strict validation, build, unit tests, integration tests, solution discovery, Console modes, `ffprobe`, `ffmpeg`, and diff checks have current reproducible evidence.
+- [x] Final report classifies every finding as CRITICAL, WARNING, or SUGGESTION with actionable file references.
+
+## Checkpoints
+
+- [x] A — load schema, apply instructions, all planning artifacts, lessons, and repository status.
+- [x] B — map tasks, requirements, scenarios, design decisions, implementation, and tests.
+- [x] C — run serialized deterministic verification and inspect operational evidence.
+- [x] D — record results and issue archive-readiness assessment.
+
+## Risk and rollback
+
+- Risk level: low; this activity verifies existing behavior and does not modify production code.
+- Affected components: verification notes only; source, tests, public contracts, and OpenSpec artifacts remain read-only.
+- Rollback: revert this verification-notes section if it is not wanted.
+
+## Dependencies and environment
+
+- Schema: repo-local `spec-driven`; change: `add-faststart-fragmented-mp4`.
+- Expected SDK: .NET 10; production target: `netstandard2.0`.
+- `ffprobe` and `ffmpeg` must resolve from `PATH`.
+- Mounted-checkout restore uses `/p:RestoreFallbackFolders=` when required.
+
+## Working notes
+
+- OpenSpec reports proposal, design, three delta specs, and tasks as complete.
+- Objective checklist baseline: 45/45 tasks checked.
+- Delta-spec inventory: 16 requirements and 44 scenarios, counted by summing `rg -c` results across all three spec files.
+- Verification must preserve the clean production checkout and report non-zero per-project test counts.
+
+## Results
+
+- Completeness: 45/45 tasks checked; implementation evidence found for all 16 requirements.
+- Correctness: all requirement areas map to code, but Console lacks the specified H.265 sample path and inherited fragment defaults lack a public-reader parser fixture.
+- Coherence: architecture, public API compatibility, ownership, mode behavior, managed-only target, and project patterns follow the design; fragment-specific count guards run after generic box-list materialization.
+- `openspec validate add-faststart-fragmented-mp4 --strict --json` — passed, 1/1 valid with zero issues.
+- Restore completed for 4/4 projects; solution build passed with 0 warnings and 0 errors.
+- Unit tests passed 77/77; integration tests passed 19/19; solution discovery passed 96/96; all had 0 failed and 0 skipped.
+- PATH-resolved `ffprobe` and `ffmpeg` 6.1.1 ran through the integration suite. Explicit progressive, faststart, and fragmented Console runs each emitted 3 video and 4 AAC events; `ffprobe` identified H.264/AAC MP4 and `ffmpeg -v error` produced zero diagnostic bytes for each file.
+- `git diff --check` and `git diff --cached --check` passed.
+- Final assessment: 0 CRITICAL, 3 WARNING, 3 SUGGESTION. Resolve or explicitly accept the warnings before archive.
+
+# 2026-07-25 Remediate `add-faststart-fragmented-mp4` verification warnings
+
+## Acceptance criteria
+
+- [x] Console demonstrates fixed H.264/AAC and H.265/AAC GOPs in progressive, faststart, and fragmented modes while preserving the existing output-path-only invocation.
+- [x] Public `Mp4Reader` tests cover `trun → tfhd → trex` precedence, `first_sample_flags`, and unresolved defaults.
+- [x] Fragment, `traf`, and `trun` limits reject at `limit + 1` during enumeration before generic box-list materialization.
+- [x] Targeted failure baselines are recorded before production fixes.
+- [x] Full build/tests, Console/external-tool matrix, OpenSpec strict validation, and diff checks pass.
+
+## Checkpoints
+
+- [x] A — convert the three verification warnings into OpenSpec remediation tasks.
+- [x] B — add failing regression tests and preserve failure evidence.
+- [x] C — implement the smallest compatible fixes and run targeted verification.
+- [x] D — run full verification and repeat archive-readiness review.
+
+## Risk and rollback
+
+- Risk level: medium; Console gains an additive codec selector and hostile-input parsing rejects earlier.
+- Affected components: Console CLI/sample fixture, fragmented reader box enumeration, unit/integration tests, README, and OpenSpec task records.
+- Backward compatibility: existing `<output-path> [mode]` Console invocations and all valid MP4 inputs must retain behavior.
+- Rollback: revert this remediation diff; no data migration or persistent external state is involved.
+
+## Dependencies and environment
+
+- .NET SDK 10.0.203; production remains `netstandard2.0`.
+- `ffprobe` and `ffmpeg` 6.1.1 are available on `PATH`.
+- Dotnet commands remain serialized; restore uses `/p:RestoreFallbackFolders=` when required.
+
+## Working notes
+
+- Tests must use public `Mp4Reader` for inherited-default scenarios, not only `FragmentDefaultsResolver`.
+- Early-limit implementation must preserve the generic 100,000-box guard for unrelated containers.
+- Console codec selection must be additive and keep output-path-only progressive H.264 behavior.
+
+## Results
+
+- Failure baseline: public-reader inherited-default coverage passed 6/6, confirming a coverage-only warning; the three early-limit tests failed with `incomplete header` instead of specific limit diagnostics; Console smoke failed 7/9 cases against the H.264-only two-argument implementation.
+- Targeted remediation: public-reader defaults plus early-limit tests passed 9/9; expanded Console smoke passed 9/9 after adding the compatible codec selector and H.265 fixture.
+- Independent review found no production correctness/security defects. Its three coverage warnings were closed by making every defaults precedence value distinguishable, asserting every Console codec-parameter and event-output line, and preserving the generic 100,000-box guard with a direct public-reader regression test.
+- Final restore was up to date; solution build passed with 0 warnings and 0 errors.
+- Final unit tests passed 84/84; integration tests passed 23/23; solution discovery passed 107/107; all had 0 failed and 0 skipped.
+- Explicit H.264/H.265 × progressive/faststart/fragmented Console matrix emitted 3 video and 4 AAC events per file; `ffprobe` identified H.264/HEVC plus AAC and `ffmpeg -v error` produced zero diagnostic bytes for all six files.
+- OpenSpec strict validation and both staged/unstaged diff checks passed; remediation tasks are 51/51 complete.

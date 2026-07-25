@@ -27,11 +27,11 @@ Integration-test project SHALL 透過 public writer API 為 H.264/AAC 與 H.265/
 - **THEN** integration test MUST 回報清楚命名缺少 executable 的 skipped 或 failed prerequisite，且 MUST NOT 宣稱 interoperability verification passed
 
 ### Requirement: Console round-trip demonstration
-.NET 10 Console project SHALL 保留 output MP4 path 為第一個 positional argument，接受第二個可選的 `progressive`、`faststart` 或 `fragmented` mode，省略時 SHALL 使用 progressive。它 MUST 使用含 keyframe、non-keyframe 與下一個 keyframe 的固定合法 H.264/H.265/AAC samples，以所選 mode 建立並完成 MP4、重新開啟該檔、訂閱 video-NAL 與 AAC events，並印出 selected mode、parsed codec parameters、每個 emitted sample 的 timestamps 與 video keyframe state。
+.NET 10 Console project SHALL 保留 output MP4 path 為第一個 positional argument，接受第二個可選的 `progressive`、`faststart` 或 `fragmented` mode，省略時 SHALL 使用 progressive；第三個可選 codec SHALL 接受 `h264` 或 `h265`，省略時 SHALL 使用 H.264。它 MUST 使用含 keyframe、non-keyframe 與下一個 keyframe 的固定合法 H.264/H.265/AAC samples，以所選 mode 與 codec 建立並完成 MP4、重新開啟該檔、訂閱 video-NAL 與 AAC events，並印出 selected mode、parsed codec parameters、每個 emitted sample 的 timestamps 與 video keyframe state。
 
 #### Scenario: Run each demonstration mode
-- **WHEN** developer 分別以 progressive、faststart 與 fragmented mode 執行 Console
-- **THEN** 每次執行 MUST 在指定 path 寫出該 layout 的完整 MP4，透過 public `Mp4Reader` 讀回，並印出 mode、parsed parameters 與所有預期 video/AAC samples
+- **WHEN** developer 分別以 H.264 與 H.265 執行 progressive、faststart 與 fragmented Console mode
+- **THEN** 每次執行 MUST 在指定 path 寫出該 codec/layout 的完整 MP4，透過 public `Mp4Reader` 讀回，並印出 mode、codec、parsed parameters 與所有預期 video/AAC samples
 
 #### Scenario: Preserve existing Console invocation
 - **WHEN** developer 只提供既有的 output path argument

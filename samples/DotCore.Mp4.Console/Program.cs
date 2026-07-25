@@ -9,14 +9,20 @@ internal static class Program
     private const string H264AnnexBBase64 =
         "AAAAAWdCwAraewEQAAADABAAAAMDKPEiagAAAAFozg/IAAABZYiEOgxgAdAAEGcOUC6tg8te9SsWN+AAs2arfzICYaAt+5aCoVx8XBoo0twCICCvVzlQiI236uxABAEYoiEcOXp48ylu1oBFBSnPhBrlPBwq/4sAQBGOGEUVzUGmHuF+U8QAAIC4AAgDg+4OAIAjAArHYAtVUBQ4Tv6aBGUhp4xD7BwBAEYEAEARgDsuA/EQEGiV/bc5ABvXIAQF9f8GAAIBAACWBGeAC6CFZ18w0aZDVFhCKuZUUcCVuYgPpNkLYBxNtOOAQCJZLySQLbAALB4BQLpHWTWVJc69wA4AofS09YFKMJ7c9MjAAEAxQ1/AcIyR6P/aDcAIh/M8OlrOBNoAAAABQZogJJQAAAABZ0LACtp7ARAAAAMAEAAAAwMo8SJqAAAAAWjOD8gAAAFliIIIgxgALgACBecQXPsRblLdH36ABelv8WNjgFfsqwyCzC3HMP7gkMMi91RY2+dkRAQRilIwZeKSejdrASnIR0ORCgYb+xYIIxxkYyOhzCoehSCAAD4A4u4OCCMAIQAZfQpws7g2RMjiu77BwQRgQEEYDKA2aCEijuBlwP3oGP2/gwACwDSCFiADRDbXMcc8KUQmtYwh5vUoB0tIrAMai6xDbyVpG9d4ADzgUXC1Vq6ha/rQYU2qnsGUxO+1rmAC5v4CC5R0/9o2ACQubgkZtDWg";
 
+    private const string H265AnnexBBase64 =
+        "AAAAAUABDAH//wFgAAADAJAAAAMAAAMAHroCQAAAAAFCAQEBYAAAAwCQAAADAAADAB6giEWW6W8LwFoCAAADAAIAAAMAMhAAAAABRAHAcYESAAABKAGt4MMEuTHiWXJSyyxW+N6xv4Vq5NEIAF88qQR7s6AK2iwJQofxXQO9JkVjFzGgLp4R1sYfkG3kVpTNd2KjCCxznMfo6w5mRN9PhVa8xlgx/J7hEMaOgHZJJ0B+IoUP8WzcQzW5JAOipWkL8gMFlUuBEY1LN6GVlyrk16YeQpiiPLHACjVDVNbdv3/7c55wYmjYkFHPVPDxKC8ouQa8aExGWgCJuLF2x+ZoRlfUP75/wJyOx9ynyxVnd/vF2pb9g0yzVmXZXX2/w8Psf8R/gLf+H1n0mAAAAAECAdAJeIGs78AAAAABQAEMAf//AWAAAAMAkAAAAwAAAwAeugJAAAAAAUIBAQFgAAADAJAAAAMAAAMAHqCIRZbpbwvAWgIAAAMAAgAAAwAyEAAAAAFEAcBxgRIAAAEqAawI9RSAH9lHHwSnhz2diG3Ost5oqarsNScVT2t9brQQJud9VVWAIrO8xnqbZG5rTcRCmYE4pW2xSkEbxY1AEbk9uoxR/V+tAOX3+HqPMtqT6+ZuCgaEeUF6P1uzt0/JeUtEOF0Uw9//8TYgyC2n2Z4GecXMuGDFJCCeIEHmDFCPsAInv/x+XBK9IEXM1lDJZDQ/q5C/9HdOo0Z2Lq51yJBBwA==";
+
     private static readonly byte[] AacAccessUnit = Convert.FromBase64String(
         "3gIATGF2YzYwLjMxLjEwMgACcKVbYKhtUQtCff+nXj2mb315k8ezckh5ySLknwgTJUyXR2kRhUyUYViWWp0tTtWnKrSTm/6pLAciVZjPxo6jV3a3GqbbJtqmcEQRTWprTJTJTJQMDAwMDAwMDAwMDAwMDAxs2DIpZZYooooooooooooooouA");
 
     private static int Main(string[] args)
     {
-        if (args.Length > 2 || !TryParseMode(args.Length > 1 ? args[1] : null, out var mode, out var modeName))
+        if (args.Length > 3 ||
+            !TryParseMode(args.Length > 1 ? args[1] : null, out var mode, out var modeName) ||
+            !TryParseCodec(args.Length > 2 ? args[2] : null, out var codec, out var codecName))
         {
-            Console.Error.WriteLine("Usage: DotCore.Mp4.Console <output-path> [progressive|faststart|fragmented]");
+            Console.Error.WriteLine(
+                "Usage: DotCore.Mp4.Console <output-path> [progressive|faststart|fragmented] [h264|h265]");
             return 2;
         }
 
@@ -24,12 +30,7 @@ internal static class Program
         var directory = Path.GetDirectoryName(outputPath);
         if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
-        var nals = SplitAnnexB(Convert.FromBase64String(H264AnnexBBase64));
-        var sps = nals.First(nal => (nal[0] & 0x1f) == 7);
-        var pps = nals.First(nal => (nal[0] & 0x1f) == 8);
-        var videoFrames = nals.Where(nal => (nal[0] & 0x1f) == 1 || (nal[0] & 0x1f) == 5).ToArray();
-        var keyFrames = videoFrames.Select(nal => (nal[0] & 0x1f) == 5).ToArray();
-        var videoConfiguration = VideoCodecConfiguration.CreateH264(sps, pps, 4, 16, 16);
+        var fixture = CreateVideoFixture(codec);
         var audioConfiguration = new AacCodecConfiguration(new byte[] { 0x12, 0x10 }, 44100, 2);
         var sampleDuration = TimeSpan.FromMilliseconds(40);
         var audioDuration = TimeSpan.FromTicks((long)Math.Round(TimeSpan.TicksPerSecond * 1024.0 / audioConfiguration.SampleRate));
@@ -37,22 +38,22 @@ internal static class Program
         using (var stream = File.Create(outputPath))
         using (var writer = new Mp4Writer(stream, new Mp4WriterOptions { Mode = mode }))
         {
-            writer.SetVideoCodecConfiguration(videoConfiguration);
+            writer.SetVideoCodecConfiguration(fixture.Configuration);
             writer.SetAudioCodecConfiguration(audioConfiguration);
             var videoIndex = 0;
             var audioIndex = 0;
-            while (videoIndex < videoFrames.Length || audioIndex < 4)
+            while (videoIndex < fixture.Frames.Count || audioIndex < 4)
             {
                 var videoTimestamp = TimeSpan.FromTicks(sampleDuration.Ticks * videoIndex);
                 var audioTimestamp = TimeSpan.FromTicks(audioDuration.Ticks * audioIndex);
-                if (videoIndex < videoFrames.Length && (audioIndex >= 4 || videoTimestamp <= audioTimestamp))
+                if (videoIndex < fixture.Frames.Count && (audioIndex >= 4 || videoTimestamp <= audioTimestamp))
                 {
                     writer.WriteVideoNalUnit(new EncodedVideoNalUnit(
-                        videoFrames[videoIndex],
+                        fixture.Frames[videoIndex],
                         videoTimestamp,
                         videoTimestamp,
                         sampleDuration,
-                        keyFrames[videoIndex]));
+                        fixture.KeyFrames[videoIndex]));
                     videoIndex++;
                 }
                 else
@@ -69,6 +70,7 @@ internal static class Program
         }
 
         Console.WriteLine("Mode: " + modeName);
+        Console.WriteLine("Codec: " + codecName);
         Console.WriteLine("MP4: " + outputPath);
 
         using (var stream = File.OpenRead(outputPath))
@@ -78,8 +80,17 @@ internal static class Program
                               throw new Mp4FormatException("The generated MP4 does not contain a parsed video configuration.");
             var parsedAudio = reader.AudioConfiguration ??
                               throw new Mp4FormatException("The generated MP4 does not contain a parsed AAC configuration.");
-            Console.WriteLine("Parsed H.264 SPS: " + Hex(parsedVideo.Sps));
-            Console.WriteLine("Parsed H.264 PPS: " + Hex(parsedVideo.Pps));
+            if (parsedVideo.Codec == VideoCodec.H265)
+            {
+                Console.WriteLine("Parsed H.265 VPS: " + Hex(parsedVideo.Vps!));
+                Console.WriteLine("Parsed H.265 SPS: " + Hex(parsedVideo.Sps));
+                Console.WriteLine("Parsed H.265 PPS: " + Hex(parsedVideo.Pps));
+            }
+            else
+            {
+                Console.WriteLine("Parsed H.264 SPS: " + Hex(parsedVideo.Sps));
+                Console.WriteLine("Parsed H.264 PPS: " + Hex(parsedVideo.Pps));
+            }
             Console.WriteLine("Parsed AAC: objectType=" + parsedAudio.AudioObjectType +
                               " sampleRate=" + parsedAudio.SampleRate +
                               " channels=" + parsedAudio.ChannelConfiguration +
@@ -124,6 +135,60 @@ internal static class Program
         }
     }
 
+    private static bool TryParseCodec(string? value, out VideoCodec codec, out string codecName)
+    {
+        codecName = string.IsNullOrEmpty(value) ? "h264" : value.ToLowerInvariant();
+        switch (codecName)
+        {
+            case "h264":
+                codec = VideoCodec.H264;
+                return true;
+            case "h265":
+                codec = VideoCodec.H265;
+                return true;
+            default:
+                codec = VideoCodec.H264;
+                return false;
+        }
+    }
+
+    private static VideoFixture CreateVideoFixture(VideoCodec codec)
+    {
+        var nals = SplitAnnexB(Convert.FromBase64String(
+            codec == VideoCodec.H265 ? H265AnnexBBase64 : H264AnnexBBase64));
+        if (codec == VideoCodec.H265)
+        {
+            var frames = nals.Where(nal => H265NalType(nal) <= 31).ToArray();
+            return new VideoFixture(
+                VideoCodecConfiguration.CreateH265(
+                    nals.First(nal => H265NalType(nal) == 32),
+                    nals.First(nal => H265NalType(nal) == 33),
+                    nals.First(nal => H265NalType(nal) == 34),
+                    4,
+                    16,
+                    16),
+                frames,
+                frames.Select(nal => H265NalType(nal) >= 16 && H265NalType(nal) <= 23).ToArray());
+        }
+
+        var h264Frames = nals.Where(nal => (nal[0] & 0x1f) == 1 || (nal[0] & 0x1f) == 5).ToArray();
+        return new VideoFixture(
+            VideoCodecConfiguration.CreateH264(
+                nals.First(nal => (nal[0] & 0x1f) == 7),
+                nals.First(nal => (nal[0] & 0x1f) == 8),
+                4,
+                16,
+                16),
+            h264Frames,
+            h264Frames.Select(nal => (nal[0] & 0x1f) == 5).ToArray());
+    }
+
+    private static int H265NalType(byte[] nal)
+    {
+        if (nal.Length < 2) throw new InvalidDataException("The Console H.265 fixture contains an incomplete NAL unit.");
+        return (nal[0] >> 1) & 0x3f;
+    }
+
     private static IReadOnlyList<byte[]> SplitAnnexB(byte[] data)
     {
         var result = new List<byte[]>();
@@ -151,7 +216,7 @@ internal static class Program
 
         if (payloadStart < 0 || payloadStart >= data.Length)
         {
-            throw new InvalidDataException("The Console H.264 fixture contains no NAL units.");
+            throw new InvalidDataException("The Console video fixture contains no NAL units.");
         }
 
         var finalNal = new byte[data.Length - payloadStart];
@@ -163,5 +228,23 @@ internal static class Program
     private static string Hex(byte[] value)
     {
         return BitConverter.ToString(value).Replace("-", string.Empty);
+    }
+
+    private sealed class VideoFixture
+    {
+        public VideoFixture(
+            VideoCodecConfiguration configuration,
+            IReadOnlyList<byte[]> frames,
+            IReadOnlyList<bool> keyFrames)
+        {
+            if (frames.Count != keyFrames.Count) throw new ArgumentException("Video fixture metadata count mismatch.");
+            Configuration = configuration;
+            Frames = frames;
+            KeyFrames = keyFrames;
+        }
+
+        public VideoCodecConfiguration Configuration { get; }
+        public IReadOnlyList<byte[]> Frames { get; }
+        public IReadOnlyList<bool> KeyFrames { get; }
     }
 }

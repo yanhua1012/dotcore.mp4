@@ -74,11 +74,12 @@ dotnet build samples/DotCore.Mp4.Console/DotCore.Mp4.Console.csproj --no-restore
 dotnet run --project samples/DotCore.Mp4.Console/DotCore.Mp4.Console.csproj --no-build -- /tmp/dotcore-progressive.mp4
 dotnet run --project samples/DotCore.Mp4.Console/DotCore.Mp4.Console.csproj --no-build -- /tmp/dotcore-faststart.mp4 faststart
 dotnet run --project samples/DotCore.Mp4.Console/DotCore.Mp4.Console.csproj --no-build -- /tmp/dotcore-fragmented.mp4 fragmented
+dotnet run --project samples/DotCore.Mp4.Console/DotCore.Mp4.Console.csproj --no-build -- /tmp/dotcore-h265-fragmented.mp4 fragmented h265
 
 ffprobe -v error -show_format -show_streams -of json /tmp/dotcore-fragmented.mp4
 ffmpeg -v error -i /tmp/dotcore-fragmented.mp4 -map 0 -f null -
 ```
 
-只提供 output path 的既有 Console invocation 仍使用 progressive；第二參數可明確指定 `progressive`、`faststart` 或 `fragmented`。未知 mode 會顯示 usage、以非零 exit code 結束，且不建立被宣稱成功的 output。
+只提供 output path 的既有 Console invocation 仍使用 progressive H.264；第二參數可明確指定 `progressive`、`faststart` 或 `fragmented`，第三參數可選 `h264` 或 `h265` 且預設為 `h264`。未知 mode 或 codec 會顯示 usage、以非零 exit code 結束，且不建立被宣稱成功的 output。
 
 unit tests 不呼叫外部工具；integration tests 會建立固定的合法 keyframe→non-keyframe→keyframe H.264/AAC 與 H.265/AAC fixtures，對六種 codec/layout 組合執行 public writer/reader round-trip、`ffprobe` 與 `ffmpeg -v error`，並讓 public reader 反向解析 FFmpeg 產生的 `empty_moov + default_base_moof + frag_keyframe` reference files。工具不存在時測試會明確標示缺少的 executable，而不宣稱 interoperability 已通過。

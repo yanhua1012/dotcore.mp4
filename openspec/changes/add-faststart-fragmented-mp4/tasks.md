@@ -66,3 +66,12 @@
 - [x] 8.4 序列化執行 restore、build、unit tests、integration tests，記錄每個 project 的 discovered/passed/skipped count，且任何零測試或缺工具結果不得宣稱完整通過。
 - [x] 8.5 分別執行 Console progressive、faststart、fragmented outputs，對每個檔案執行 `ffprobe`、`ffmpeg -v error` 與 public `Mp4Reader` observable round-trip。
 - [x] 8.6 執行 `openspec validate add-faststart-fragmented-mp4 --strict --json`、`git diff --check` 與最終 scope review，記錄 rollout 為 opt-in、rollback 為還原新 modes/parser 且既有 progressive 無 migration。
+
+## 9. Verification warning remediation
+
+- [x] 9.1 先擴充 Console smoke tests，證明 H.264/H.265 與三種 writer modes 的固定 GOP/AAC round-trip，同時保留既有 output-path-only invocation。
+- [x] 9.2 以最小且向後相容的 Console codec selection 實作 H.265 fixture、writer configuration 與 parsed output，使 9.1 tests 轉綠。
+- [x] 9.3 加入經 public `Mp4Reader` 解析的 deterministic fragment fixtures，驗證 `trun → tfhd → trex` duration/size/flags precedence、`first_sample_flags` 與 unresolved fields。
+- [x] 9.4 加入 fragment/traf/trun specific limit 的 early-rejection tests，證明 parser 在 `limit + 1` 時停止，而非先 materialize 至 generic box limit。
+- [x] 9.5 實作 bounded box enumeration，使 top-level `moof`、fragment `traf` 與 track-fragment `trun` 在各自上限超出時立即拋出 `Mp4FormatException`。
+- [x] 9.6 序列化執行 targeted tests、restore、build、unit/integration/solution tests、三模式雙 codec Console、`ffprobe`、`ffmpeg`、OpenSpec strict validation 與 diff checks。

@@ -11,6 +11,23 @@ namespace DotCore.Mp4.Tests;
 public sealed class FragmentedReaderResourceLimitTests
 {
     [Fact]
+    public void ReaderRetainsGenericContainerBoxLimit()
+    {
+        var bytes = new List<byte>(WriteInitialMovie());
+        var emptyFree = Box("free");
+        for (var index = 0; index <= Mp4Reader.MaximumBoxesPerContainer; index++)
+        {
+            bytes.AddRange(emptyFree);
+        }
+
+        var error = Assert.Throws<Mp4FormatException>(() =>
+            new Mp4Reader(new MemoryStream(bytes.ToArray())));
+
+        Assert.Contains("container", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("box count", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void ReaderRejectsExcessiveTopLevelFragments()
     {
         var bytes = new List<byte>(WriteInitialMovie());
@@ -19,6 +36,7 @@ public sealed class FragmentedReaderResourceLimitTests
         {
             bytes.AddRange(emptyMoof);
         }
+        bytes.Add(0xff);
 
         var error = Assert.Throws<Mp4FormatException>(() =>
             new Mp4Reader(new MemoryStream(bytes.ToArray())));
@@ -36,6 +54,7 @@ public sealed class FragmentedReaderResourceLimitTests
         {
             children.AddRange(emptyTraf);
         }
+        children.Add(0xff);
 
         var bytes = new List<byte>(WriteInitialMovie());
         bytes.AddRange(Box("moof", children.ToArray()));
@@ -58,6 +77,7 @@ public sealed class FragmentedReaderResourceLimitTests
         {
             trafChildren.AddRange(emptyTrun);
         }
+        trafChildren.Add(0xff);
 
         var moofChildren = new List<byte>();
         moofChildren.AddRange(FullBox("mfhd", 0, 0, U32(1)));
