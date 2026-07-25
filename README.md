@@ -6,6 +6,7 @@
 
 - `Mp4Writer` 產生 progressive、非 fragmented MP4，支援單一 H.264 或 H.265 視訊軌，以及單一 AAC 音訊軌。
 - H.264 必須提供 SPS/PPS；H.265 必須提供 VPS/SPS/PPS；writer 會分別寫入 `avcC`/`hvcC`。
+- Parameter sets 必須各自只含一個正確類型的 NAL unit：H.264 SPS/PPS 為 type 7/8，H.265 VPS/SPS/PPS 為 type 32/33/34；錯誤標示會在寫入前拒絕。
 - AAC 必須提供與 sample rate、channel configuration 一致的 AudioSpecificConfig；不會從 ADTS header 猜測設定。
 - 同一 PTS/DTS 的連續 video NAL units 會聚合成一個 MP4 sample；reader 會再依原始順序逐 NAL 發出事件。AAC access unit 一個對應一個 MP4 sample。
 - 時間戳公開為 `TimeSpan`，MP4 track timescale 使用 10,000,000，因此不需要靜默捨入。
@@ -15,6 +16,8 @@
 writer 的輸出 stream 必須同時 `CanWrite`、`CanSeek`；reader 的輸入 stream 必須同時 `CanRead`、`CanSeek`。兩者預設不會關閉 caller-owned stream，可用建構子的 `leaveOpen: false` 明確交由元件關閉。writer 必須呼叫 `FinalizeFile()`（或 `Complete()`/`Finish()`）才會 backpatch `mdat` 並寫入 `moov`。
 
 輸入資料、codec parameter sets、duration 和時間戳會在 API 邊界驗證。減少的 DTS、無法精確轉換的時間、malformed MP4 box、超出 sample 邊界的 NAL length、unsupported codec 或不一致 sample table 會以 `Mp4TimestampException` 或 `Mp4FormatException` 明確失敗；reader 不會靜默跳過媒體。
+
+Reader 會先將完整 MP4 snapshot 至 managed memory，單一輸入上限為 256 MiB。每軌最多 1,000,000 samples，各 sample table 最多 1,000,000 entries；每個 container 最多 100,000 boxes。MPEG-4 descriptor nesting 最深 32 層且最多走訪 4,096 個 descriptors。超出任一限制會在大額配置或展開前以 `Mp4FormatException` 拒絕。
 
 基本使用方式：
 

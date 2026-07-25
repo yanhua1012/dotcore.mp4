@@ -24,6 +24,29 @@ public sealed class ContractTests
     }
 
     [Fact]
+    public void VideoConfigurationRejectsMislabeledParameterSetNalTypes()
+    {
+        Assert.Throws<ArgumentException>(() => VideoCodecConfiguration.CreateH264(
+            new byte[] { 0x68, 0x01 },
+            new byte[] { 0x68, 0x02 }));
+        Assert.Throws<ArgumentException>(() => VideoCodecConfiguration.CreateH264(
+            new byte[] { 0x67, 0x01 },
+            new byte[] { 0x67, 0x02 }));
+        Assert.Throws<ArgumentException>(() => VideoCodecConfiguration.CreateH265(
+            new byte[] { 0x42, 0x01 },
+            new byte[] { 0x42, 0x02 },
+            new byte[] { 0x44, 0x01 }));
+        Assert.Throws<ArgumentException>(() => VideoCodecConfiguration.CreateH265(
+            new byte[] { 0x40, 0x01 },
+            new byte[] { 0x44, 0x02 },
+            new byte[] { 0x44, 0x01 }));
+        Assert.Throws<ArgumentException>(() => VideoCodecConfiguration.CreateH265(
+            new byte[] { 0x40, 0x01 },
+            new byte[] { 0x42, 0x02 },
+            new byte[] { 0x42, 0x01 }));
+    }
+
+    [Fact]
     public void AacConfigurationRequiresAscToMatchDeclaredParameters()
     {
         var configuration = new AacCodecConfiguration(new byte[] { 0x12, 0x10 }, 44100, 2);
@@ -40,6 +63,19 @@ public sealed class ContractTests
         using var stream = new NonSeekableWriteStream();
         Assert.Throws<InvalidOperationException>(() => new Mp4Writer(stream));
         Assert.Empty(stream.Bytes);
+    }
+
+    [Fact]
+    public void WriterRejectsNullAndNonWritableOutputBeforeAnyHeader()
+    {
+        Assert.Throws<ArgumentNullException>(() => new Mp4Writer(null!));
+
+        using var stream = new MemoryStream(Array.Empty<byte>(), false);
+        Assert.True(stream.CanSeek);
+        Assert.False(stream.CanWrite);
+        Assert.Throws<InvalidOperationException>(() => new Mp4Writer(stream));
+        Assert.Equal(0, stream.Length);
+        Assert.Equal(0, stream.Position);
     }
 
     [Fact]
@@ -62,6 +98,27 @@ public sealed class ContractTests
     }
 
     [Fact]
+    public void WriterRejectsDecreasingAudioDecodeTimestampBeforeWritingSample()
+    {
+        using var stream = new MemoryStream();
+        using var writer = new Mp4Writer(stream);
+        writer.SetAudioCodecConfiguration(TestMedia.AacConfiguration);
+        var duration = TimeSpan.FromMilliseconds(20);
+        writer.WriteAudioSample(new EncodedAudioSample(
+            new byte[] { 0x21, 0x10 },
+            TimeSpan.FromMilliseconds(20),
+            TimeSpan.FromMilliseconds(20),
+            duration));
+        var length = stream.Length;
+
+        var error = Assert.Throws<Mp4TimestampException>(() => writer.WriteAudioSample(
+            new EncodedAudioSample(new byte[] { 0x22, 0x10 }, TimeSpan.Zero, TimeSpan.Zero, duration)));
+
+        Assert.Contains("audio DTS", error.Message, StringComparison.Ordinal);
+        Assert.Equal(length, stream.Length);
+    }
+
+    [Fact]
     public void WriterDoesNotCloseCallerOwnedStream()
     {
         var stream = new TrackingMemoryStream();
@@ -74,6 +131,27 @@ public sealed class ContractTests
 
         Assert.False(stream.Closed);
         Assert.True(stream.Length > 0);
+    }
+
+    [Fact]
+    public void WriterAndReaderCloseCallerStreamsWhenLeaveOpenIsFalse()
+    {
+        var output = new TrackingMemoryStream();
+        using (var writer = new Mp4Writer(output, false))
+        {
+            writer.SetAudioCodecConfiguration(TestMedia.AacConfiguration);
+            writer.WriteAudioSample(TestMedia.Audio(new byte[] { 0x21, 0x10 }, TimeSpan.Zero));
+            writer.FinalizeFile();
+        }
+
+        Assert.True(output.Closed);
+        var input = new TrackingMemoryStream(output.Bytes);
+        using (var reader = new Mp4Reader(input, false))
+        {
+            Assert.NotNull(reader.AudioConfiguration);
+        }
+
+        Assert.True(input.Closed);
     }
 
     private sealed class NonSeekableWriteStream : Stream
@@ -94,7 +172,17 @@ public sealed class ContractTests
 
     private sealed class TrackingMemoryStream : MemoryStream
     {
+        public TrackingMemoryStream()
+        {
+        }
+
+        public TrackingMemoryStream(byte[] bytes) : base(bytes)
+        {
+        }
+
         public bool Closed { get; private set; }
+        public byte[] Bytes => ToArray();
+
         protected override void Dispose(bool disposing)
         {
             Closed = true;
@@ -107,6 +195,15 @@ internal static class TestMedia
 {
     public static readonly VideoCodecConfiguration H264Configuration =
         VideoCodecConfiguration.CreateH264(new byte[] { 0x67, 0x42, 0x00, 0x1e }, new byte[] { 0x68, 0xce, 0x06, 0xe2 }, 4, 16, 16);
+
+    public static readonly VideoCodecConfiguration H265Configuration =
+        VideoCodecConfiguration.CreateH265(
+            new byte[] { 0x40, 0x01 },
+            new byte[] { 0x42, 0x01 },
+            new byte[] { 0x44, 0x01 },
+            4,
+            16,
+            16);
 
     public static readonly AacCodecConfiguration AacConfiguration =
         new AacCodecConfiguration(new byte[] { 0x12, 0x10 }, 44100, 2);

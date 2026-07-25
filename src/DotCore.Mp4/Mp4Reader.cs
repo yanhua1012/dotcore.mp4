@@ -8,6 +8,13 @@ namespace DotCore.Mp4;
 /// <summary>Reads supported MP4 tracks and synchronously emits timed media events.</summary>
 public sealed class Mp4Reader : IDisposable
 {
+    internal const long MaximumInputBytes = 256L * 1024 * 1024;
+    internal const int MaximumSampleCount = 1_000_000;
+    internal const int MaximumDescriptorDepth = 32;
+    private const int MaximumTableEntryCount = 1_000_000;
+    private const int MaximumDescriptorCount = 4_096;
+    private const int MaximumBoxesPerContainer = 100_000;
+
     private readonly Stream _input;
     private readonly bool _leaveOpen;
     private readonly byte[] _data;
@@ -140,13 +147,16 @@ public sealed class Mp4Reader : IDisposable
         var originalPosition = input.Position;
         try
         {
-            if (input.Length > int.MaxValue)
+            var length = input.Length;
+            if (length < 0 || length > MaximumInputBytes)
             {
-                throw new Mp4FormatException("MP4 files larger than 2 GB are not supported by this managed reader.");
+                throw new Mp4FormatException(
+                    "The MP4 input length exceeds the managed reader limit of " +
+                    MaximumInputBytes + " bytes.");
             }
 
             input.Seek(0, SeekOrigin.Begin);
-            var result = new byte[(int)input.Length];
+            var result = new byte[(int)length];
             var offset = 0;
             while (offset < result.Length)
             {
@@ -167,14 +177,38 @@ public sealed class Mp4Reader : IDisposable
     {
         var topLevel = ReadBoxes(data, 0, data.Length);
         var moov = FindSingle(topLevel, "moov");
+        var trackBoxes = Children(data, moov, "trak");
+        ValidateSupportedTrackMultiplicity(data, trackBoxes);
         var tracks = new List<ParsedTrack>();
-        foreach (var trak in Children(data, moov, "trak"))
+        foreach (var trak in trackBoxes)
         {
             var parsed = ParseTrack(data, trak);
             if (parsed != null) tracks.Add(parsed);
         }
 
         return tracks;
+    }
+
+    private static void ValidateSupportedTrackMultiplicity(byte[] data, IList<Box> tracks)
+    {
+        var hasVideo = false;
+        var hasAudio = false;
+        foreach (var trak in tracks)
+        {
+            var mdia = FindSingle(Children(data, trak, "mdia"), "mdia");
+            var handler = FindSingle(Children(data, mdia, "hdlr"), "hdlr");
+            var handlerType = FourCc(data, handler.PayloadStart + 8);
+            if (handlerType == "vide")
+            {
+                if (hasVideo) throw new Mp4FormatException("The MP4 contains more than one supported video track.");
+                hasVideo = true;
+            }
+            else if (handlerType == "soun")
+            {
+                if (hasAudio) throw new Mp4FormatException("The MP4 contains more than one supported audio track.");
+                hasAudio = true;
+            }
+        }
     }
 
     private static ParsedTrack? ParseTrack(byte[] data, Box trak)
@@ -204,13 +238,22 @@ public sealed class Mp4Reader : IDisposable
             throw new Mp4FormatException("The audio track does not contain a supported mp4a/AAC sample entry.");
         }
 
-        var durations = ParseTimeToSample(data, FindSingle(Children(data, stbl, "stts"), "stts"));
         var sizes = ParseSampleSizes(data, FindSingle(Children(data, stbl, "stsz"), "stsz"));
+        var durations = ParseTimeToSample(
+            data,
+            FindSingle(Children(data, stbl, "stts"), "stts"),
+            sizes.Count);
         var chunkOffsetsBox = FindFirst(Children(data, stbl, "stco"), "stco") ?? FindSingle(Children(data, stbl, "co64"), "co64");
         var chunkOffsets = ParseChunkOffsets(data, chunkOffsetsBox);
         var chunkMap = ParseSampleToChunk(data, FindSingle(Children(data, stbl, "stsc"), "stsc"));
-        var compositionOffsets = ParseCompositionOffsets(data, FindFirst(Children(data, stbl, "ctts"), "ctts"));
-        var syncSamples = ParseSyncSamples(data, FindFirst(Children(data, stbl, "stss"), "stss"));
+        var compositionOffsets = ParseCompositionOffsets(
+            data,
+            FindFirst(Children(data, stbl, "ctts"), "ctts"),
+            sizes.Count);
+        var syncSamples = ParseSyncSamples(
+            data,
+            FindFirst(Children(data, stbl, "stss"), "stss"),
+            sizes.Count);
         var samples = BuildSamples(data, durations, sizes, chunkOffsets, chunkMap, compositionOffsets, syncSamples);
 
         return new ParsedTrack(data, handlerType, timescale, description.VideoConfiguration, description.AudioConfiguration, samples);
@@ -236,10 +279,17 @@ public sealed class Mp4Reader : IDisposable
             var height = U16(data, entry.PayloadStart + 26);
             var childBoxes = ReadBoxes(data, entry.PayloadStart + 78, entry.End);
             var codecBox = FindSingle(childBoxes, entry.Type == "avc1" ? "avcC" : "hvcC");
-            var configuration = entry.Type == "avc1"
-                ? ParseAvcConfiguration(data, codecBox, width, height)
-                : ParseHevcConfiguration(data, codecBox, width, height);
-            return new SampleDescription(configuration, null);
+            try
+            {
+                var configuration = entry.Type == "avc1"
+                    ? ParseAvcConfiguration(data, codecBox, width, height)
+                    : ParseHevcConfiguration(data, codecBox, width, height);
+                return new SampleDescription(configuration, null);
+            }
+            catch (ArgumentException ex)
+            {
+                throw new Mp4FormatException("The MP4 video codec configuration is malformed or unsupported.", ex);
+            }
         }
 
         if (entry.Type != "mp4a")
@@ -251,7 +301,14 @@ public sealed class Mp4Reader : IDisposable
         var child = ReadBoxes(data, entry.PayloadStart + 28, entry.End);
         var esds = FindSingle(child, "esds");
         var asc = ParseAudioSpecificConfig(data, esds);
-        return new SampleDescription(null, AacCodecConfiguration.FromAudioSpecificConfig(asc));
+        try
+        {
+            return new SampleDescription(null, AacCodecConfiguration.FromAudioSpecificConfig(asc));
+        }
+        catch (ArgumentException ex)
+        {
+            throw new Mp4FormatException("The AAC AudioSpecificConfig is malformed or unsupported.", ex);
+        }
     }
 
     private static VideoCodecConfiguration ParseAvcConfiguration(byte[] data, Box box, int width, int height)
@@ -310,16 +367,38 @@ public sealed class Mp4Reader : IDisposable
     private static byte[] ParseAudioSpecificConfig(byte[] data, Box esds)
     {
         RequirePayload(esds, 5, "esds");
-        var result = FindDescriptor(data, esds.PayloadStart + 4, esds.End, 0x05);
+        var descriptorCount = 0;
+        var result = FindDescriptor(data, esds.PayloadStart + 4, esds.End, 0x05, 0, ref descriptorCount);
         if (result == null) throw new Mp4FormatException("esds does not contain DecoderSpecificInfo.");
         return Slice(data, result.Value.Start, result.Value.Length);
     }
 
-    private static DescriptorRange? FindDescriptor(byte[] data, long start, long end, byte wantedTag)
+    private static DescriptorRange? FindDescriptor(
+        byte[] data,
+        long start,
+        long end,
+        byte wantedTag,
+        int depth,
+        ref int descriptorCount)
     {
+        if (depth > MaximumDescriptorDepth)
+        {
+            throw new Mp4FormatException(
+                "MPEG-4 descriptor nesting exceeds the supported depth of " +
+                MaximumDescriptorDepth + ".");
+        }
+
         var cursor = start;
         while (cursor < end)
         {
+            descriptorCount++;
+            if (descriptorCount > MaximumDescriptorCount)
+            {
+                throw new Mp4FormatException(
+                    "MPEG-4 descriptor traversal exceeds the supported count of " +
+                    MaximumDescriptorCount + ".");
+            }
+
             if (cursor + 2 > end) throw new Mp4FormatException("An MPEG-4 descriptor header exceeds its parent box.");
             var tag = data[cursor++];
             int length;
@@ -334,7 +413,13 @@ public sealed class Mp4Reader : IDisposable
             else if (tag == 0x04 && length >= 13) nestedStart += 13;
             if (nestedStart < payloadEnd)
             {
-                var nested = FindDescriptor(data, nestedStart, payloadEnd, wantedTag);
+                var nested = FindDescriptor(
+                    data,
+                    nestedStart,
+                    payloadEnd,
+                    wantedTag,
+                    depth + 1,
+                    ref descriptorCount);
                 if (nested.HasValue) return nested;
             }
 
@@ -368,20 +453,29 @@ public sealed class Mp4Reader : IDisposable
         return U32(data, offset);
     }
 
-    private static IList<long> ParseTimeToSample(byte[] data, Box box)
+    private static IList<long> ParseTimeToSample(byte[] data, Box box, int expectedSampleCount)
     {
         RequirePayload(box, 8, "stts");
         var count = U32(data, box.PayloadStart + 4);
-        var result = new List<long>();
         var offset = box.PayloadStart + 8;
-        for (uint i = 0; i < count; i++)
+        var entryCount = ValidateTableEntryCount(count, box, offset, 8, "stts");
+        var result = new List<long>(expectedSampleCount);
+        for (var i = 0; i < entryCount; i++)
         {
-            if (offset + 8 > box.End) throw new Mp4FormatException("stts entry exceeds its box boundary.");
             var sampleCount = U32(data, offset);
             var duration = U32(data, offset + 4);
-            if (sampleCount == 0 || result.Count > int.MaxValue - sampleCount) throw new Mp4FormatException("stts contains an invalid sample count.");
+            if (sampleCount == 0 || sampleCount > expectedSampleCount - result.Count)
+            {
+                throw new Mp4FormatException("stts sample count does not match the declared stsz sample count.");
+            }
+
             for (uint sample = 0; sample < sampleCount; sample++) result.Add(duration);
             offset += 8;
+        }
+
+        if (result.Count != expectedSampleCount)
+        {
+            throw new Mp4FormatException("stts and stsz describe different sample counts.");
         }
 
         return result;
@@ -392,15 +486,26 @@ public sealed class Mp4Reader : IDisposable
         RequirePayload(box, 12, "stsz");
         var constantSize = U32(data, box.PayloadStart + 4);
         var count = U32(data, box.PayloadStart + 8);
-        var result = new List<long>();
+        if (count > MaximumSampleCount)
+        {
+            throw new Mp4FormatException(
+                "stsz sample count exceeds the supported limit of " +
+                MaximumSampleCount + ".");
+        }
+
         var offset = box.PayloadStart + 12;
-        if (count > int.MaxValue) throw new Mp4FormatException("stsz contains too many samples.");
-        for (uint i = 0; i < count; i++)
+        if (constantSize == 0 && (long)count > (box.End - offset) / 4)
+        {
+            throw new Mp4FormatException("stsz entries exceed the box boundary.");
+        }
+
+        var sampleCount = checked((int)count);
+        var result = new List<long>(sampleCount);
+        for (var i = 0; i < sampleCount; i++)
         {
             var size = constantSize;
             if (constantSize == 0)
             {
-                if (offset + 4 > box.End) throw new Mp4FormatException("stsz entry exceeds its box boundary.");
                 size = U32(data, offset);
                 offset += 4;
             }
@@ -416,13 +521,14 @@ public sealed class Mp4Reader : IDisposable
         var entrySize = box.Type == "co64" ? 8 : 4;
         RequirePayload(box, 8, box.Type);
         var count = U32(data, box.PayloadStart + 4);
-        if (count > int.MaxValue) throw new Mp4FormatException(box.Type + " contains too many chunks.");
-        var result = new List<long>();
         var offset = box.PayloadStart + 8;
-        for (uint i = 0; i < count; i++)
+        var entryCount = ValidateTableEntryCount(count, box, offset, entrySize, box.Type);
+        var result = new List<long>(entryCount);
+        for (var i = 0; i < entryCount; i++)
         {
-            if (offset + entrySize > box.End) throw new Mp4FormatException(box.Type + " entry exceeds its box boundary.");
-            result.Add(entrySize == 8 ? checked((long)U64(data, offset)) : U32(data, offset));
+            result.Add(entrySize == 8
+                ? SampleTableDecisions.ToReaderChunkOffset(U64(data, offset))
+                : U32(data, offset));
             offset += entrySize;
         }
 
@@ -433,15 +539,20 @@ public sealed class Mp4Reader : IDisposable
     {
         RequirePayload(box, 8, "stsc");
         var count = U32(data, box.PayloadStart + 4);
-        var result = new List<SampleToChunkEntry>();
         var offset = box.PayloadStart + 8;
-        for (uint i = 0; i < count; i++)
+        var entryCount = ValidateTableEntryCount(count, box, offset, 12, "stsc");
+        var result = new List<SampleToChunkEntry>(entryCount);
+        uint previousFirstChunk = 0;
+        for (var i = 0; i < entryCount; i++)
         {
-            if (offset + 12 > box.End) throw new Mp4FormatException("stsc entry exceeds its box boundary.");
             var firstChunk = U32(data, offset);
             var samplesPerChunk = U32(data, offset + 4);
             var description = U32(data, offset + 8);
             if (firstChunk == 0 || samplesPerChunk == 0 || description != 1) throw new Mp4FormatException("stsc contains an unsupported chunk mapping.");
+            previousFirstChunk = SampleTableDecisions.ValidateNextSampleToChunkFirstChunk(
+                firstChunk,
+                previousFirstChunk,
+                i == 0);
             result.Add(new SampleToChunkEntry(firstChunk, samplesPerChunk));
             offset += 12;
         }
@@ -449,7 +560,7 @@ public sealed class Mp4Reader : IDisposable
         return result;
     }
 
-    private static IList<long> ParseCompositionOffsets(byte[] data, Box? box)
+    private static IList<long> ParseCompositionOffsets(byte[] data, Box? box, int expectedSampleCount)
     {
         if (box == null) return new List<long>();
         var value = box;
@@ -457,34 +568,52 @@ public sealed class Mp4Reader : IDisposable
         var version = data[value.PayloadStart];
         if (version != 0 && version != 1) throw new Mp4FormatException("Unsupported ctts version.");
         var count = U32(data, value.PayloadStart + 4);
-        var result = new List<long>();
         var offset = value.PayloadStart + 8;
-        for (uint i = 0; i < count; i++)
+        var entryCount = ValidateTableEntryCount(count, value, offset, 8, "ctts");
+        var result = new List<long>(expectedSampleCount);
+        for (var i = 0; i < entryCount; i++)
         {
-            if (offset + 8 > value.End) throw new Mp4FormatException("ctts entry exceeds its box boundary.");
             var sampleCount = U32(data, offset);
             var compositionOffset = version == 1 ? I32(data, offset + 4) : U32(data, offset + 4);
-            if (sampleCount == 0 || result.Count > int.MaxValue - sampleCount) throw new Mp4FormatException("ctts contains an invalid sample count.");
+            if (sampleCount == 0 || sampleCount > expectedSampleCount - result.Count)
+            {
+                throw new Mp4FormatException("ctts sample count does not match the declared stsz sample count.");
+            }
+
             for (uint sample = 0; sample < sampleCount; sample++) result.Add(compositionOffset);
             offset += 8;
+        }
+
+        if (result.Count != expectedSampleCount)
+        {
+            throw new Mp4FormatException("ctts does not describe every sample.");
         }
 
         return result;
     }
 
-    private static ISet<int>? ParseSyncSamples(byte[] data, Box? box)
+    private static ISet<int>? ParseSyncSamples(byte[] data, Box? box, int expectedSampleCount)
     {
         if (box == null) return null;
         var value = box;
         RequirePayload(value, 8, "stss");
         var count = U32(data, value.PayloadStart + 4);
-        var result = new HashSet<int>();
         var offset = value.PayloadStart + 8;
-        for (uint i = 0; i < count; i++)
+        var entryCount = ValidateTableEntryCount(count, value, offset, 4, "stss");
+        if (entryCount > expectedSampleCount)
         {
-            if (offset + 4 > value.End) throw new Mp4FormatException("stss entry exceeds its box boundary.");
+            throw new Mp4FormatException("stss contains more sync samples than stsz declares.");
+        }
+
+        var result = new HashSet<int>();
+        for (var i = 0; i < entryCount; i++)
+        {
             var sampleNumber = U32(data, offset);
-            if (sampleNumber == 0 || sampleNumber > int.MaxValue) throw new Mp4FormatException("stss contains an invalid sample number.");
+            if (sampleNumber == 0 || sampleNumber > expectedSampleCount)
+            {
+                throw new Mp4FormatException("stss contains an invalid sample number.");
+            }
+
             result.Add((int)sampleNumber);
             offset += 4;
         }
@@ -510,13 +639,18 @@ public sealed class Mp4Reader : IDisposable
         if (sizes.Count == 0) return new List<ParsedSample>();
         if (chunkOffsets.Count == 0 || chunkMap.Count == 0) throw new Mp4FormatException("Sample data is present without chunk offset tables.");
 
-        var result = new List<ParsedSample>();
+        var result = new List<ParsedSample>(sizes.Count);
         var sampleIndex = 0;
+        var mapIndex = 0;
+        var mapping = chunkMap[0];
         for (var chunkIndex = 1; chunkIndex <= chunkOffsets.Count; chunkIndex++)
         {
-            var mapping = chunkMap[0];
-            for (var mapIndex = 1; mapIndex < chunkMap.Count && chunkMap[mapIndex].FirstChunk <= chunkIndex; mapIndex++) mapping = chunkMap[mapIndex];
-            if (mapping.FirstChunk > chunkIndex) throw new Mp4FormatException("stsc does not map the first chunk.");
+            while (mapIndex + 1 < chunkMap.Count && chunkMap[mapIndex + 1].FirstChunk <= chunkIndex)
+            {
+                mapIndex++;
+                mapping = chunkMap[mapIndex];
+            }
+
             var offset = chunkOffsets[chunkIndex - 1];
             for (uint inChunk = 0; inChunk < mapping.SamplesPerChunk; inChunk++)
             {
@@ -616,6 +750,13 @@ public sealed class Mp4Reader : IDisposable
         var cursor = start;
         while (cursor < end)
         {
+            if (result.Count >= MaximumBoxesPerContainer)
+            {
+                throw new Mp4FormatException(
+                    "An MP4 container exceeds the supported box count of " +
+                    MaximumBoxesPerContainer + ".");
+            }
+
             if (end - cursor < 8) throw new Mp4FormatException("An MP4 box has an incomplete header.");
             var size32 = U32(data, cursor);
             var type = FourCc(data, cursor + 4);
@@ -644,6 +785,28 @@ public sealed class Mp4Reader : IDisposable
         }
 
         return result;
+    }
+
+    private static int ValidateTableEntryCount(
+        uint count,
+        Box box,
+        long entriesStart,
+        int entrySize,
+        string tableName)
+    {
+        if (count > MaximumTableEntryCount)
+        {
+            throw new Mp4FormatException(
+                tableName + " entry count exceeds the supported limit of " +
+                MaximumTableEntryCount + ".");
+        }
+
+        if ((long)count > (box.End - entriesStart) / entrySize)
+        {
+            throw new Mp4FormatException(tableName + " entries exceed the box boundary.");
+        }
+
+        return checked((int)count);
     }
 
     private static void RequirePayload(Box box, long minimum, string type)

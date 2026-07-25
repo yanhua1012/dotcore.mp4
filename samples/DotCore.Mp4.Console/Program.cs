@@ -49,16 +49,20 @@ internal static class Program
         }
 
         Console.WriteLine("MP4: " + outputPath);
-        Console.WriteLine("H.264 SPS: " + Hex(videoConfiguration.Sps));
-        Console.WriteLine("H.264 PPS: " + Hex(videoConfiguration.Pps));
-        Console.WriteLine("AAC: objectType=" + audioConfiguration.AudioObjectType +
-                          " sampleRate=" + audioConfiguration.SampleRate +
-                          " channels=" + audioConfiguration.ChannelConfiguration +
-                          " ASC=" + Hex(audioConfiguration.AudioSpecificConfig));
 
         using (var stream = File.OpenRead(outputPath))
         using (var reader = new Mp4Reader(stream))
         {
+            var parsedVideo = reader.VideoConfiguration ??
+                              throw new Mp4FormatException("The generated MP4 does not contain a parsed video configuration.");
+            var parsedAudio = reader.AudioConfiguration ??
+                              throw new Mp4FormatException("The generated MP4 does not contain a parsed AAC configuration.");
+            Console.WriteLine("Parsed H.264 SPS: " + Hex(parsedVideo.Sps));
+            Console.WriteLine("Parsed H.264 PPS: " + Hex(parsedVideo.Pps));
+            Console.WriteLine("Parsed AAC: objectType=" + parsedAudio.AudioObjectType +
+                              " sampleRate=" + parsedAudio.SampleRate +
+                              " channels=" + parsedAudio.ChannelConfiguration +
+                              " ASC=" + Hex(parsedAudio.AudioSpecificConfig));
             reader.VideoNalUnitRead += (_, eventArgs) => Console.WriteLine(
                 "Video NAL: size=" + eventArgs.Data.Length +
                 " pts=" + eventArgs.PresentationTimestamp +

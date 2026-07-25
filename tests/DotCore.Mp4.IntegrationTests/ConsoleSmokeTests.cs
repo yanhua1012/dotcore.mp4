@@ -31,8 +31,9 @@ public sealed class ConsoleSmokeTests
             process.WaitForExit();
             Assert.True(process.ExitCode == 0, stderr);
             Assert.True(File.Exists(output), "Console did not create its output file.");
-            Assert.Contains("H.264 SPS:", stdout, StringComparison.Ordinal);
-            Assert.Contains("AAC:", stdout, StringComparison.Ordinal);
+            Assert.Contains("Parsed H.264 SPS: 6742C00ADDEC0440000003004000000CA3C489E0", stdout, StringComparison.Ordinal);
+            Assert.Contains("Parsed H.264 PPS: 68CE0FC8", stdout, StringComparison.Ordinal);
+            Assert.Contains("Parsed AAC: objectType=2 sampleRate=44100 channels=2 ASC=1210", stdout, StringComparison.Ordinal);
             Assert.Contains("Video NAL:", stdout, StringComparison.Ordinal);
             Assert.Contains("AAC sample:", stdout, StringComparison.Ordinal);
 

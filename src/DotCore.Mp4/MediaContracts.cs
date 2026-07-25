@@ -31,6 +31,8 @@ public sealed class VideoCodecConfiguration
         }
 
         ValidateParameterSets(sps, nameof(sps), pps, nameof(pps), null, nalLengthSize, width, height);
+        ValidateParameterSetNalType(sps, nameof(sps), VideoCodec.H264, 7, "SPS");
+        ValidateParameterSetNalType(pps, nameof(pps), VideoCodec.H264, 8, "PPS");
         Codec = codec;
         _vps = Array.Empty<byte>();
         _sps = Copy(sps);
@@ -61,6 +63,9 @@ public sealed class VideoCodecConfiguration
         }
 
         ValidateParameterSets(sps, nameof(sps), pps, nameof(pps), vps, nalLengthSize, width, height);
+        ValidateParameterSetNalType(vps, nameof(vps), VideoCodec.H265, 32, "VPS");
+        ValidateParameterSetNalType(sps, nameof(sps), VideoCodec.H265, 33, "SPS");
+        ValidateParameterSetNalType(pps, nameof(pps), VideoCodec.H265, 34, "PPS");
         Codec = codec;
         _vps = Copy(vps);
         _sps = Copy(sps);
@@ -162,6 +167,42 @@ public sealed class VideoCodecConfiguration
         if (width < 0 || height < 0 || (width == 0) != (height == 0) || width > ushort.MaxValue || height > ushort.MaxValue)
         {
             throw new ArgumentOutOfRangeException(nameof(width), "Width and height must both be zero or positive 16-bit values.");
+        }
+    }
+
+    private static void ValidateParameterSetNalType(
+        byte[] value,
+        string parameterName,
+        VideoCodec codec,
+        int expectedType,
+        string displayName)
+    {
+        System.Collections.Generic.IList<byte[]> units;
+        try
+        {
+            units = NalUnits.Normalize(value);
+        }
+        catch (Mp4FormatException ex)
+        {
+            throw new ArgumentException("The " + displayName + " is not a valid NAL unit.", parameterName, ex);
+        }
+
+        if (units.Count != 1 || units[0].Length < (codec == VideoCodec.H265 ? 2 : 1))
+        {
+            throw new ArgumentException(
+                "The " + displayName + " must contain exactly one complete NAL unit.",
+                parameterName);
+        }
+
+        var actualType = codec == VideoCodec.H264
+            ? units[0][0] & 0x1f
+            : (units[0][0] >> 1) & 0x3f;
+        if (actualType != expectedType)
+        {
+            throw new ArgumentException(
+                "The " + displayName + " NAL unit has type " + actualType +
+                " but " + expectedType + " is required for " + codec + ".",
+                parameterName);
         }
     }
 
