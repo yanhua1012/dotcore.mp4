@@ -36,6 +36,7 @@ internal sealed class AsyncOnlyGateStream : Stream
     private long _asyncWriteBytes;
     private bool _throwAfterByteOnRead;
     private int _throwAfterByteCount;
+    private bool _throwOnWrite;
     private bool _closed;
 
     public AsyncOnlyGateStream(byte[]? initial = null, bool seekable = true, bool writable = true, bool readable = true)
@@ -83,6 +84,8 @@ internal sealed class AsyncOnlyGateStream : Stream
         _throwAfterByteOnRead = true;
         _throwAfterByteCount = byteCount;
     }
+
+    public void ArmThrowOnWrite() => _throwOnWrite = true;
 
     public byte[] ToArray() => _inner.ToArray();
     public long InnerLength => _inner.Length;
@@ -159,6 +162,12 @@ internal sealed class AsyncOnlyGateStream : Stream
         await EnterOutstandingAsync(_writeGate, cancellationToken).ConfigureAwait(false);
         try
         {
+            if (_throwOnWrite)
+            {
+                _throwOnWrite = false;
+                throw new IOException("AsyncOnlyGateStream injected write failure.");
+            }
+
             _inner.Write(buffer, offset, count);
             _asyncWriteBytes += count;
         }

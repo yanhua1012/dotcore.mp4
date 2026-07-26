@@ -19,24 +19,24 @@
 
 ## 3. Writer operation state 與 async factory slice
 
-- [ ] 3.1 加入failing Writer factory tests，涵蓋兩個overloads、options snapshot、progressive/faststart async header、fragmented zero-output lazy start、invalid capability/options zero-success-header、mid-header cancel/exception的partial output/no returned instance及failure ownership。
-- [ ] 3.2 加入failing operation-gate tests，以delayed active operation驗證async/async與sync/async configure/write/finalize/dispose overlap fail-fast、active operation仍完成且rejected call不改state。
-- [ ] 3.3 加入failing cancellation/fault-state tests，區分already-cancelled與pre-output validation可恢復、已回傳Writer跨越output-risk boundary後cancel/任意exception terminal Faulted、Faulted後methods/aliases的`InvalidOperationException`及僅Dispose可用。
+- [x] 3.1 加入failing Writer factory tests，涵蓋兩個overloads、options snapshot、progressive/faststart async header、fragmented zero-output lazy start、invalid capability/options zero-success-header、mid-header cancel/exception的partial output/no returned instance及failure ownership。
+- [x] 3.2 加入failing operation-gate tests，以delayed active operation驗證async/async與sync/async configure/write/finalize/dispose overlap fail-fast、active operation仍完成且rejected call不改state。
+- [x] 3.3 加入failing cancellation/fault-state tests，區分already-cancelled與pre-output validation可恢復、已回傳Writer跨越output-risk boundary後cancel/任意exception terminal Faulted、Faulted後methods/aliases的`InvalidOperationException`及僅Dispose可用。
 - [ ] 3.4 加入failing precedence matrix，涵蓋cancelled token搭配disposed/Faulted/Active/Finalized instance、null sample及合法Idle operation，並加入final I/O成功後late cancellation仍commit成功的deterministic gate。
-- [ ] 3.5 執行Writer factory/state targeted tests，保存async factory、operation gate、precedence及terminal state尚未存在的red baseline。
-- [ ] 3.6 實作non-blocking canonical operation guard與Idle/Active/Finalized/Faulted transitions，讓aliases只轉送canonical methods，並保持sequential sync/async mixing合法。
-- [ ] 3.7 分離Writer capability/options/state初始化與header planning，實作兩個具正體中文 XML documentation 的`CreateAsync` overload；fragmented保持lazy start。
-- [ ] 3.8 實作state/argument/gate/cancellation precedence、pre-output rejection recovery、output-risk fault transition、late-cancel commit cutoff與fault diagnostics，且不改變既有sync I/O failure contract。
-- [ ] 3.9 執行factory、operation、ownership、mode contract及既有constructor tests至green，確認sync path不等待Task且overlap tests無timing dependency。
+- [x] 3.5 執行Writer factory/state targeted tests，保存async factory、operation gate、precedence及terminal state尚未存在的red baseline。
+- [x] 3.6 實作non-blocking canonical operation guard與Idle/Active/Finalized/Faulted transitions，讓aliases只轉送canonical methods，並保持sequential sync/async mixing合法。
+- [x] 3.7 分離Writer capability/options/state初始化與header planning，實作兩個具正體中文 XML documentation 的`CreateAsync` overload；fragmented保持lazy start。
+- [x] 3.8 實作state/argument/gate/cancellation precedence、pre-output rejection recovery、output-risk fault transition、late-cancel commit cutoff與fault diagnostics，且不改變既有sync I/O failure contract。
+- [x] 3.9 執行factory、operation、ownership、mode contract及既有constructor tests至green，確認sync path不等待Task且overlap tests無timing dependency。
 
 ## 4. Progressive async ingestion 與 finalization slice
 
-- [ ] 4.1 加入failing progressive tests，要求async audio immediate output、pending video access-unit flush、multi-NAL order、mdat backpatch及moov append只使用caller Stream async writes。
+- [x] 4.1 加入failing progressive tests，要求async audio immediate output、pending video access-unit flush、multi-NAL order、mdat backpatch及moov append只使用caller Stream async writes。
 - [ ] 4.2 加入failing progressive cancel/failure tests，分別注入mid-audio、mid-video length/payload、mid-backpatch及mid-moov，assert partial bytes、no false commit與terminal Faulted。
-- [ ] 4.3 加入failing pure-async及sequential mixed H.264/H.265/AAC fixtures，要求與sync progressive SHA-256、box/payload摘要及Reader round-trip完全相同。
-- [ ] 4.4 執行progressive targeted tests，保存canonical async write/finalize path尚未貫穿external I/O的red baseline。
-- [ ] 4.5 實作具正體中文 XML documentation 的`WriteVideoNalUnitAsync`與`WriteAudioSampleAsync`，共用validation/planning並以bounded prefix/payload `WriteAsync`完成progressive ingestion。
-- [ ] 4.6 實作`FinalizeFileAsync`的pending-video flush、同步seek control、async mdat backpatch與moov append，不新增implicit `FlushAsync`。
+- [x] 4.3 加入failing pure-async及sequential mixed H.264/H.265/AAC fixtures，要求與sync progressive SHA-256、box/payload摘要及Reader round-trip完全相同。
+- [x] 4.4 執行progressive targeted tests，保存canonical async write/finalize path尚未貫穿external I/O的red baseline。
+- [x] 4.5 實作具正體中文 XML documentation 的`WriteVideoNalUnitAsync`與`WriteAudioSampleAsync`，共用validation/planning並以bounded prefix/payload `WriteAsync`完成progressive ingestion。
+- [x] 4.6 實作`FinalizeFileAsync`的pending-video flush、同步seek control、async mdat backpatch與moov append，不新增implicit `FlushAsync`。
 - [ ] 4.7 執行progressive async、mixed、cancellation、failure、timestamp、aggregation及idempotent cross-sync/async finalization tests至green。
 
 ## 5. Fragmented async output slice

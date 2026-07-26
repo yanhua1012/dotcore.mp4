@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace DotCore.Mp4;
 
@@ -16,14 +18,14 @@ public sealed class Mp4Writer : IDisposable
     private readonly List<Mp4Sample> _videoSamples = new List<Mp4Sample>();
     private readonly List<Mp4Sample> _audioSamples = new List<Mp4Sample>();
     private readonly List<FragmentSample> _fragmentSamples = new List<FragmentSample>();
-    private readonly long _mdatStart;
+    private long _mdatStart;
     private PendingVideoAccessUnit? _pendingVideo;
     private long? _lastVideoDts;
     private long? _lastAudioDts;
     private long? _lastGlobalDts;
     private VideoCodecConfiguration? _videoConfiguration;
     private AacCodecConfiguration? _audioConfiguration;
-    private bool _finalized;
+    private WriterState _state = WriterState.Idle;
     private bool _disposed;
     private bool _fragmentedStarted;
     private bool _fragmentedHasVideoSample;
@@ -40,6 +42,102 @@ public sealed class Mp4Writer : IDisposable
     /// <param name="options">輸出模式與資源限制；writer 會在建構時複製其值。</param>
     /// <param name="leaveOpen">writer 釋放時是否保持 <paramref name="output"/> 開啟。</param>
     public Mp4Writer(Stream output, Mp4WriterOptions options, bool leaveOpen = true)
+        : this(output, options, leaveOpen, writeHeader: true)
+    {
+    }
+
+    private Mp4Writer(Stream output, Mp4WriterOptions options, bool leaveOpen, bool writeHeader)
+    {
+        ValidateFactoryArguments(output, options);
+        ValidateOutputCapabilities(output, options.Mode);
+
+        _output = output;
+        _leaveOpen = leaveOpen;
+        _mode = options.Mode;
+        _maximumFragmentBufferBytes = options.MaximumFragmentBufferBytes;
+
+        if (_mode == Mp4WriteMode.Fragmented)
+        {
+            _mdatStart = -1;
+            return;
+        }
+
+        if (!writeHeader)
+        {
+            _mdatStart = -1;
+            return;
+        }
+
+        var writer = new IsoBmffWriter(_output);
+        WriteFileTypeBox(writer);
+        _mdatStart = _output.Position;
+        writer.WriteUInt32(1);
+        writer.WriteFourCc("mdat");
+        writer.WriteUInt64(0);
+    }
+
+    /// <summary>以非同步方式建立 <see cref="Mp4Writer"/>，使用 caller stream 的 <see cref="Stream.WriteAsync(byte[], int, int, CancellationToken)"/> 寫出 progressive 或 faststart 的初始 header；fragmented 模式依既有 lazy-start 語意不輸出任何 bytes。</summary>
+    /// <param name="output">接收 MP4 資料的 caller-owned stream。</param>
+    /// <param name="leaveOpen">writer 釋放時是否保持 <paramref name="output"/> 開啟。</param>
+    /// <param name="cancellationToken">可取消初始 header 輸出的 token。</param>
+    /// <returns>已寫入初始 header 的 <see cref="Mp4Writer"/>。</returns>
+    /// <remarks>
+    /// factory 失敗時不會回傳 Writer，且不會因 <paramref name="leaveOpen"/> 為 <c>false</c> 而關閉 caller-owned stream；caller 須自行丟棄或恢復可能不完整的 output。
+    /// </remarks>
+    public static Task<Mp4Writer> CreateAsync(
+        Stream output,
+        bool leaveOpen = true,
+        CancellationToken cancellationToken = default)
+    {
+        return CreateAsync(output, new Mp4WriterOptions(), leaveOpen, cancellationToken);
+    }
+
+    /// <summary>以非同步方式建立 <see cref="Mp4Writer"/>，使用 caller stream 的 <see cref="Stream.WriteAsync(byte[], int, int, CancellationToken)"/> 寫出 progressive 或 faststart 的初始 header；fragmented 模式依既有 lazy-start 語意不輸出任何 bytes。</summary>
+    /// <param name="output">接收 MP4 資料的 caller-owned stream。</param>
+    /// <param name="options">輸出模式與資源限制；writer 會複製其值。</param>
+    /// <param name="leaveOpen">writer 釋放時是否保持 <paramref name="output"/> 開啟。</param>
+    /// <param name="cancellationToken">可取消初始 header 輸出的 token。</param>
+    /// <returns>已寫入初始 header 的 <see cref="Mp4Writer"/>。</returns>
+    /// <remarks>
+    /// factory 失敗時不會回傳 Writer，且不會因 <paramref name="leaveOpen"/> 為 <c>false</c> 而關閉 caller-owned stream；caller 須自行丟棄或恢復可能不完整的 output。
+    /// </remarks>
+    public static async Task<Mp4Writer> CreateAsync(
+        Stream output,
+        Mp4WriterOptions options,
+        bool leaveOpen = true,
+        CancellationToken cancellationToken = default)
+    {
+        ValidateFactoryArguments(output, options);
+        ValidateOutputCapabilities(output, options.Mode);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var writer = new Mp4Writer(output, options, leaveOpen, writeHeader: false);
+        if (options.Mode == Mp4WriteMode.Fragmented)
+        {
+            return writer;
+        }
+
+        var header = BuildProgressiveHeaderBytes();
+        await output.WriteAsync(header, 0, header.Length, cancellationToken).ConfigureAwait(false);
+        writer._mdatStart = output.Position - 16;
+        return writer;
+    }
+
+    private static byte[] BuildProgressiveHeaderBytes()
+    {
+        using (var stream = new MemoryStream())
+        {
+            var writer = new IsoBmffWriter(stream);
+            WriteFileTypeBox(writer);
+            var mdatStart = stream.Position;
+            writer.WriteUInt32(1);
+            writer.WriteFourCc("mdat");
+            writer.WriteUInt64(0);
+            return stream.ToArray();
+        }
+    }
+
+    private static void ValidateFactoryArguments(Stream output, Mp4WriterOptions options)
     {
         if (output == null) throw new ArgumentNullException(nameof(output));
         if (options == null) throw new ArgumentNullException(nameof(options));
@@ -60,26 +158,6 @@ public sealed class Mp4Writer : IDisposable
                 options.MaximumFragmentBufferBytes,
                 "Maximum fragment buffer bytes must be greater than zero.");
         }
-
-        ValidateOutputCapabilities(output, options.Mode);
-
-        _output = output;
-        _leaveOpen = leaveOpen;
-        _mode = options.Mode;
-        _maximumFragmentBufferBytes = options.MaximumFragmentBufferBytes;
-
-        if (_mode == Mp4WriteMode.Fragmented)
-        {
-            _mdatStart = -1;
-            return;
-        }
-
-        var writer = new IsoBmffWriter(_output);
-        WriteFileTypeBox(writer);
-        _mdatStart = _output.Position;
-        writer.WriteUInt32(1);
-        writer.WriteFourCc("mdat");
-        writer.WriteUInt64(0);
     }
 
     private static void ValidateOutputCapabilities(Stream output, Mp4WriteMode mode)
@@ -136,14 +214,18 @@ public sealed class Mp4Writer : IDisposable
 
     public void SetVideoCodecConfiguration(VideoCodecConfiguration configuration)
     {
-        EnsureWritable();
-        if (configuration == null) throw new ArgumentNullException(nameof(configuration));
-        if (_videoConfiguration != null || _videoSamples.Count != 0 || _pendingVideo != null || _fragmentedStarted)
+        EnterOperation();
+        try
         {
-            throw new InvalidOperationException("The video codec configuration can only be set once before video samples are written.");
-        }
+            if (configuration == null) throw new ArgumentNullException(nameof(configuration));
+            if (_videoConfiguration != null || _videoSamples.Count != 0 || _pendingVideo != null || _fragmentedStarted)
+            {
+                throw new InvalidOperationException("The video codec configuration can only be set once before video samples are written.");
+            }
 
-        _videoConfiguration = configuration;
+            _videoConfiguration = configuration;
+        }
+        finally { ExitOperationToIdleOnSyncFailure(); }
     }
 
     public void ConfigureAudio(AacCodecConfiguration configuration) => SetAudioCodecConfiguration(configuration);
@@ -152,53 +234,61 @@ public sealed class Mp4Writer : IDisposable
 
     public void SetAudioCodecConfiguration(AacCodecConfiguration configuration)
     {
-        EnsureWritable();
-        if (configuration == null) throw new ArgumentNullException(nameof(configuration));
-        if (_audioConfiguration != null || _audioSamples.Count != 0 || _fragmentedStarted)
+        EnterOperation();
+        try
         {
-            throw new InvalidOperationException("The AAC codec configuration can only be set once before audio samples are written.");
-        }
+            if (configuration == null) throw new ArgumentNullException(nameof(configuration));
+            if (_audioConfiguration != null || _audioSamples.Count != 0 || _fragmentedStarted)
+            {
+                throw new InvalidOperationException("The AAC codec configuration can only be set once before audio samples are written.");
+            }
 
-        _audioConfiguration = configuration;
+            _audioConfiguration = configuration;
+        }
+        finally { ExitOperationToIdleOnSyncFailure(); }
     }
 
     public void WriteVideo(EncodedVideoNalUnit sample) => WriteVideoNalUnit(sample);
 
     public void WriteVideoNalUnit(EncodedVideoNalUnit sample)
     {
-        EnsureWritable();
-        if (_videoConfiguration == null)
+        EnterOperation();
+        try
         {
-            throw new InvalidOperationException("Configure a video codec before writing video NAL units.");
-        }
-
-        if (sample == null) throw new ArgumentNullException(nameof(sample));
-        var pts = MediaTime.ToTicks(sample.PresentationTimestamp, MediaTime.DefaultTrackTimescale);
-        var dts = MediaTime.ToTicks(sample.DecodeTimestamp, MediaTime.DefaultTrackTimescale);
-        var duration = MediaTime.ToTicks(sample.Duration, MediaTime.DefaultTrackTimescale);
-        ValidateTimedSample(dts, duration, _lastVideoDts, "video");
-        var nalUnits = NalUnits.Normalize(sample.DataBytes);
-        ValidateNalLengths(nalUnits, _videoConfiguration.NalLengthSize);
-        if (_mode == Mp4WriteMode.Fragmented)
-        {
-            WriteFragmentedVideoNalUnits(sample, nalUnits, pts, dts, duration);
-            return;
-        }
-
-        _lastVideoDts = dts;
-        if (_pendingVideo != null && _pendingVideo.Pts == pts && _pendingVideo.Dts == dts)
-        {
-            if (_pendingVideo.Duration != duration || _pendingVideo.IsKeyFrame != sample.IsKeyFrame)
+            if (_videoConfiguration == null)
             {
-                throw new Mp4FormatException("NAL units in one access unit must have the same duration and key-frame state.");
+                throw new InvalidOperationException("Configure a video codec before writing video NAL units.");
             }
 
-            _pendingVideo.Nals.AddRange(nalUnits);
-            return;
-        }
+            if (sample == null) throw new ArgumentNullException(nameof(sample));
+            var pts = MediaTime.ToTicks(sample.PresentationTimestamp, MediaTime.DefaultTrackTimescale);
+            var dts = MediaTime.ToTicks(sample.DecodeTimestamp, MediaTime.DefaultTrackTimescale);
+            var duration = MediaTime.ToTicks(sample.Duration, MediaTime.DefaultTrackTimescale);
+            ValidateTimedSample(dts, duration, _lastVideoDts, "video");
+            var nalUnits = NalUnits.Normalize(sample.DataBytes);
+            ValidateNalLengths(nalUnits, _videoConfiguration.NalLengthSize);
+            if (_mode == Mp4WriteMode.Fragmented)
+            {
+                WriteFragmentedVideoNalUnits(sample, nalUnits, pts, dts, duration);
+                return;
+            }
 
-        FlushPendingVideo();
-        _pendingVideo = new PendingVideoAccessUnit(pts, dts, duration, sample.IsKeyFrame, nalUnits);
+            _lastVideoDts = dts;
+            if (_pendingVideo != null && _pendingVideo.Pts == pts && _pendingVideo.Dts == dts)
+            {
+                if (_pendingVideo.Duration != duration || _pendingVideo.IsKeyFrame != sample.IsKeyFrame)
+                {
+                    throw new Mp4FormatException("NAL units in one access unit must have the same duration and key-frame state.");
+                }
+
+                _pendingVideo.Nals.AddRange(nalUnits);
+                return;
+            }
+
+            FlushPendingVideo();
+            _pendingVideo = new PendingVideoAccessUnit(pts, dts, duration, sample.IsKeyFrame, nalUnits);
+        }
+        finally { ExitOperationToIdleOnSyncFailure(); }
     }
 
     public void WriteAudio(EncodedAudioSample sample) => WriteAudioSample(sample);
@@ -207,69 +297,421 @@ public sealed class Mp4Writer : IDisposable
 
     public void WriteAudioSample(EncodedAudioSample sample)
     {
-        EnsureWritable();
-        if (_audioConfiguration == null)
+        EnterOperation();
+        try
         {
-            throw new InvalidOperationException("Configure AAC before writing audio samples.");
+            if (_audioConfiguration == null)
+            {
+                throw new InvalidOperationException("Configure AAC before writing audio samples.");
+            }
+
+            if (sample == null) throw new ArgumentNullException(nameof(sample));
+            var pts = MediaTime.ToTicks(sample.PresentationTimestamp, MediaTime.DefaultTrackTimescale);
+            var dts = MediaTime.ToTicks(sample.DecodeTimestamp, MediaTime.DefaultTrackTimescale);
+            var duration = MediaTime.ToTicks(sample.Duration, MediaTime.DefaultTrackTimescale);
+            ValidateTimedSample(dts, duration, _lastAudioDts, "audio");
+            if (_mode == Mp4WriteMode.Fragmented)
+            {
+                if (_videoConfiguration == null)
+                {
+                    throw new InvalidOperationException("Fragmented MP4 output requires video configuration before AAC media.");
+                }
+
+                ValidateGlobalDts(dts, "audio");
+                var data = sample.DataBytes;
+                EnsureFragmentBufferCapacity(data.Length);
+                EnsureFragmentedStarted();
+                _fragmentSamples.Add(new FragmentSample(
+                    false,
+                    FragmentPayloadSource.FromAudio(data),
+                    pts,
+                    dts,
+                    duration,
+                    true));
+                _fragmentBufferedBytes = checked(_fragmentBufferedBytes + data.Length);
+                _lastAudioDts = dts;
+                _lastGlobalDts = dts;
+                return;
+            }
+
+            _lastAudioDts = dts;
+            var offset = _output.Position;
+            _output.Write(sample.DataBytes, 0, sample.DataBytes.Length);
+            _audioSamples.Add(new Mp4Sample(offset, sample.DataBytes.Length, pts, dts, duration, true));
+        }
+        finally { ExitOperationToIdleOnSyncFailure(); }
+    }
+
+    /// <summary>以非同步方式寫入單一 video NAL access unit，使用 caller stream 的 <see cref="Stream.WriteAsync(byte[], int, int, CancellationToken)"/> 輸出 length prefix 與 NAL payload。</summary>
+    /// <param name="sample">要寫入的 video NAL unit。</param>
+    /// <param name="cancellationToken">可取消外部輸出的 token。</param>
+    /// <returns>代表非同步寫入的工作。</returns>
+    public Task WriteVideoNalUnitAsync(EncodedVideoNalUnit sample, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        EnterOperation();
+        if (sample == null)
+        {
+            ExitOperationToIdleOnSyncFailure();
+            throw new ArgumentNullException(nameof(sample));
+        }
+        if (_videoConfiguration == null)
+        {
+            ExitOperationToIdleOnSyncFailure();
+            throw new InvalidOperationException("Configure a video codec before writing video NAL units.");
         }
 
-        if (sample == null) throw new ArgumentNullException(nameof(sample));
+        return WriteVideoNalUnitAsyncCore(sample, cancellationToken);
+    }
+
+    private async Task WriteVideoNalUnitAsyncCore(EncodedVideoNalUnit sample, CancellationToken cancellationToken)
+    {
         var pts = MediaTime.ToTicks(sample.PresentationTimestamp, MediaTime.DefaultTrackTimescale);
         var dts = MediaTime.ToTicks(sample.DecodeTimestamp, MediaTime.DefaultTrackTimescale);
         var duration = MediaTime.ToTicks(sample.Duration, MediaTime.DefaultTrackTimescale);
-        ValidateTimedSample(dts, duration, _lastAudioDts, "audio");
-        if (_mode == Mp4WriteMode.Fragmented)
+        try
         {
-            if (_videoConfiguration == null)
+            ValidateTimedSample(dts, duration, _lastVideoDts, "video");
+            var nalUnits = NalUnits.Normalize(sample.DataBytes);
+            ValidateNalLengths(nalUnits, _videoConfiguration!.NalLengthSize);
+            if (_mode == Mp4WriteMode.Fragmented)
             {
-                throw new InvalidOperationException("Fragmented MP4 output requires video configuration before AAC media.");
+                WriteFragmentedVideoNalUnits(sample, nalUnits, pts, dts, duration);
+                ExitOperationToIdleOnSyncFailure();
+                return;
             }
 
-            ValidateGlobalDts(dts, "audio");
-            var data = sample.DataBytes;
-            EnsureFragmentBufferCapacity(data.Length);
-            EnsureFragmentedStarted();
-            _fragmentSamples.Add(new FragmentSample(
-                false,
-                FragmentPayloadSource.FromAudio(data),
-                pts,
-                dts,
-                duration,
-                true));
-            _fragmentBufferedBytes = checked(_fragmentBufferedBytes + data.Length);
+            _lastVideoDts = dts;
+            if (_pendingVideo != null && _pendingVideo.Pts == pts && _pendingVideo.Dts == dts)
+            {
+                if (_pendingVideo.Duration != duration || _pendingVideo.IsKeyFrame != sample.IsKeyFrame)
+                {
+                    throw new Mp4FormatException("NAL units in one access unit must have the same duration and key-frame state.");
+                }
+
+                _pendingVideo.Nals.AddRange(nalUnits);
+                ExitOperationToIdleOnSyncFailure();
+                return;
+            }
+
+            await FlushPendingVideoAsync(cancellationToken).ConfigureAwait(false);
+            _pendingVideo = new PendingVideoAccessUnit(pts, dts, duration, sample.IsKeyFrame, nalUnits);
+            ExitOperationToIdleOnSyncFailure();
+        }
+        catch (OperationCanceledException) when (_state == WriterState.Active)
+        {
+            _state = WriterState.Faulted;
+            throw;
+        }
+        catch (Exception error) when (_state == WriterState.Active && IsOutputRiskFailure(error))
+        {
+            _state = WriterState.Faulted;
+            throw;
+        }
+        catch
+        {
+            ExitOperationToIdleOnSyncFailure();
+            throw;
+        }
+    }
+
+    /// <summary>以非同步方式寫入單一 AAC sample，使用 caller stream 的 <see cref="Stream.WriteAsync(byte[], int, int, CancellationToken)"/>。</summary>
+    /// <param name="sample">要寫入的 AAC access unit。</param>
+    /// <param name="cancellationToken">可取消外部輸出的 token。</param>
+    /// <returns>代表非同步寫入的工作。</returns>
+    public Task WriteAudioSampleAsync(EncodedAudioSample sample, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        EnterOperation();
+        if (sample == null)
+        {
+            ExitOperationToIdleOnSyncFailure();
+            throw new ArgumentNullException(nameof(sample));
+        }
+        if (_audioConfiguration == null)
+        {
+            ExitOperationToIdleOnSyncFailure();
+            throw new InvalidOperationException("Configure AAC before writing audio samples.");
+        }
+
+        return WriteAudioSampleAsyncCore(sample, cancellationToken);
+    }
+
+    private async Task WriteAudioSampleAsyncCore(EncodedAudioSample sample, CancellationToken cancellationToken)
+    {
+        var pts = MediaTime.ToTicks(sample.PresentationTimestamp, MediaTime.DefaultTrackTimescale);
+        var dts = MediaTime.ToTicks(sample.DecodeTimestamp, MediaTime.DefaultTrackTimescale);
+        var duration = MediaTime.ToTicks(sample.Duration, MediaTime.DefaultTrackTimescale);
+        try
+        {
+            ValidateTimedSample(dts, duration, _lastAudioDts, "audio");
+            if (_mode == Mp4WriteMode.Fragmented)
+            {
+                await WriteFragmentedAudioAsync(sample, pts, dts, duration, cancellationToken).ConfigureAwait(false);
+                ExitOperationToIdleOnSyncFailure();
+                return;
+            }
+
             _lastAudioDts = dts;
-            _lastGlobalDts = dts;
+            var offset = _output.Position;
+            await _output.WriteAsync(sample.DataBytes, 0, sample.DataBytes.Length, cancellationToken).ConfigureAwait(false);
+            _audioSamples.Add(new Mp4Sample(offset, sample.DataBytes.Length, pts, dts, duration, true));
+            ExitOperationToIdleOnSyncFailure();
+        }
+        catch (OperationCanceledException) when (_state == WriterState.Active)
+        {
+            _state = WriterState.Faulted;
+            throw;
+        }
+        catch (Exception error) when (_state == WriterState.Active && IsOutputRiskFailure(error))
+        {
+            _state = WriterState.Faulted;
+            throw;
+        }
+        catch
+        {
+            ExitOperationToIdleOnSyncFailure();
+            throw;
+        }
+    }
+
+    private Task WriteFragmentedAudioAsync(
+        EncodedAudioSample sample,
+        long pts,
+        long dts,
+        long duration,
+        CancellationToken cancellationToken)
+    {
+        if (_videoConfiguration == null)
+        {
+            throw new InvalidOperationException("Fragmented MP4 output requires video configuration before AAC media.");
+        }
+
+        ValidateGlobalDts(dts, "audio");
+        var data = sample.DataBytes;
+        EnsureFragmentBufferCapacity(data.Length);
+        EnsureFragmentedStarted();
+        _fragmentSamples.Add(new FragmentSample(
+            false,
+            FragmentPayloadSource.FromAudio(data),
+            pts,
+            dts,
+            duration,
+            true));
+        _fragmentBufferedBytes = checked(_fragmentBufferedBytes + data.Length);
+        _lastAudioDts = dts;
+        _lastGlobalDts = dts;
+        return Task.CompletedTask;
+    }
+
+    private async Task FlushPendingVideoAsync(CancellationToken cancellationToken)
+    {
+        if (_pendingVideo == null) return;
+        if (_mode == Mp4WriteMode.Fragmented)
+        {
+            CommitPendingFragmentedVideo();
             return;
         }
 
-        _lastAudioDts = dts;
+        if (_videoConfiguration == null)
+        {
+            throw new InvalidOperationException("Configure a video codec before writing video NAL units.");
+        }
+
         var offset = _output.Position;
-        _output.Write(sample.DataBytes, 0, sample.DataBytes.Length);
-        _audioSamples.Add(new Mp4Sample(offset, sample.DataBytes.Length, pts, dts, duration, true));
+        long size = 0;
+        var buffer = BuildPendingVideoAccessUnitBytes();
+        size = buffer.Length;
+        if (size == 0 || size > uint.MaxValue)
+        {
+            throw new Mp4FormatException("A video access unit has an unsupported MP4 sample size.");
+        }
+
+        await _output.WriteAsync(buffer, 0, buffer.Length, cancellationToken).ConfigureAwait(false);
+        _videoSamples.Add(new Mp4Sample(
+            offset,
+            size,
+            _pendingVideo.Pts,
+            _pendingVideo.Dts,
+            _pendingVideo.Duration,
+            _pendingVideo.IsKeyFrame));
+        _pendingVideo = null;
+    }
+
+    private byte[] BuildPendingVideoAccessUnitBytes()
+    {
+        if (_videoConfiguration == null)
+        {
+            throw new InvalidOperationException("Configure a video codec before writing video NAL units.");
+        }
+
+        using (var stream = new MemoryStream())
+        {
+            var writer = new IsoBmffWriter(stream);
+            foreach (var nal in _pendingVideo!.Nals)
+            {
+                if (nal.Length > MaxLengthForNal(_videoConfiguration.NalLengthSize))
+                {
+                    throw new Mp4FormatException("A video NAL unit does not fit in the configured MP4 length field.");
+                }
+
+                WriteNalLength(writer, nal.Length, _videoConfiguration.NalLengthSize);
+                writer.WriteBytes(nal.BackingArray, nal.Offset, nal.Count);
+            }
+
+            return stream.ToArray();
+        }
+    }
+
+    private async Task FlushFragmentAsync(long? boundaryDts, CancellationToken cancellationToken)
+    {
+        var selected = SelectFragmentSamples(boundaryDts);
+        if (selected == null) return;
+        var (video, audio, videoPayloadBytes, audioPayloadBytes) = selected.Value;
+        var payloadBytes = checked(videoPayloadBytes + audioPayloadBytes);
+        var mdatSize = checked(payloadBytes + 8);
+        if (mdatSize > uint.MaxValue)
+        {
+            throw new Mp4FormatException("A fragment mdat box exceeds the 32-bit box-size limit.");
+        }
+
+        uint nextSequenceNumber;
+        try
+        {
+            nextSequenceNumber = checked(_fragmentSequenceNumber + 1);
+        }
+        catch (OverflowException error)
+        {
+            throw new Mp4FormatException("The fragment sequence number exceeds the supported range.", error);
+        }
+
+        var moof = BuildMovieFragment(video, audio, videoPayloadBytes);
+        await _output.WriteAsync(moof.Buffer, 0, moof.Count, cancellationToken).ConfigureAwait(false);
+        var mdatHeader = new byte[8];
+        mdatHeader[0] = (byte)((mdatSize >> 24) & 0xFF);
+        mdatHeader[1] = (byte)((mdatSize >> 16) & 0xFF);
+        mdatHeader[2] = (byte)((mdatSize >> 8) & 0xFF);
+        mdatHeader[3] = (byte)(mdatSize & 0xFF);
+        mdatHeader[4] = (byte)'m';
+        mdatHeader[5] = (byte)'d';
+        mdatHeader[6] = (byte)'a';
+        mdatHeader[7] = (byte)'t';
+        await _output.WriteAsync(mdatHeader, 0, 8, cancellationToken).ConfigureAwait(false);
+        foreach (var sample in video) await WriteFragmentPayloadAsync(sample, cancellationToken).ConfigureAwait(false);
+        foreach (var sample in audio) await WriteFragmentPayloadAsync(sample, cancellationToken).ConfigureAwait(false);
+
+        CommitFragmentFlush(video, audio, nextSequenceNumber);
+    }
+
+    private async Task WriteFragmentPayloadAsync(FragmentSample sample, CancellationToken cancellationToken)
+    {
+        var source = sample.PayloadSource;
+        if (source.ContiguousData != null)
+        {
+            await _output.WriteAsync(source.ContiguousData, 0, source.ContiguousData.Length, cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var ranges = source.Ranges ??
+                     throw new InvalidOperationException("A fragment payload source has no data.");
+        var buffer = BuildFragmentNalBuffer(ranges, source.NalLengthSize);
+        await _output.WriteAsync(buffer, 0, buffer.Length, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static byte[] BuildFragmentNalBuffer(IList<NalUnitRange> ranges, int nalLengthSize)
+    {
+        using (var stream = new MemoryStream())
+        {
+            var writer = new IsoBmffWriter(stream);
+            foreach (var range in ranges)
+            {
+                WriteNalLength(writer, range.Count, nalLengthSize);
+                writer.WriteBytes(range.BackingArray, range.Offset, range.Count);
+            }
+
+            return stream.ToArray();
+        }
+    }
+
+    private async Task RelocateMdatForFastStartAsync(long endOfMdat, CancellationToken cancellationToken)
+    {
+        const int relocationBufferBytes = 64 * 1024;
+        var moov = FastStartLayout.BuildStableMovieBox(BuildMovieBox);
+        var destinationEnd = checked(endOfMdat + moov.LongLength);
+        _output.SetLength(destinationEnd);
+        var buffer = new byte[relocationBufferBytes];
+        var sourceEnd = endOfMdat;
+        try
+        {
+            while (sourceEnd > _mdatStart)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var count = (int)Math.Min(buffer.Length, sourceEnd - _mdatStart);
+                var sourceStart = sourceEnd - count;
+                _output.Position = sourceStart;
+                var read = 0;
+                while (read < count)
+                {
+                    var current = await _output.ReadAsync(buffer, read, count - read, cancellationToken).ConfigureAwait(false);
+                    if (current == 0)
+                    {
+                        throw new IOException("Faststart mdat relocation encountered an unexpected end of stream.");
+                    }
+
+                    read += current;
+                }
+
+                _output.Position = checked(sourceStart + moov.LongLength);
+                await _output.WriteAsync(buffer, 0, count, cancellationToken).ConfigureAwait(false);
+                sourceEnd = sourceStart;
+            }
+
+            _output.Position = _mdatStart;
+            await _output.WriteAsync(moov, 0, moov.Length, cancellationToken).ConfigureAwait(false);
+            _output.Position = destinationEnd;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception error) when (
+            error is IOException ||
+            error is NotSupportedException ||
+            error is InvalidOperationException)
+        {
+            throw new IOException("Faststart mdat relocation failed; the output may be incomplete.", error);
+        }
+    }
+
+    private static bool IsOutputRiskFailure(Exception error)
+    {
+        return error is IOException || error is NotSupportedException || error is ObjectDisposedException;
     }
 
     /// <summary>Backpatches mdat and appends the complete movie metadata.</summary>
     public void FinalizeFile()
     {
-        if (_disposed) throw new ObjectDisposedException(nameof(Mp4Writer));
-        if (_finalized) return;
+        EnterFinalize();
+        if (_state == WriterState.Finalized) return;
 
         if (_mode == Mp4WriteMode.Fragmented)
         {
             CommitPendingFragmentedVideo();
             if (!_fragmentedHasVideoSample)
             {
+                _state = WriterState.Idle;
                 throw new InvalidOperationException("Fragmented MP4 output requires at least one video sample.");
             }
 
             FlushFragment(null);
-            _finalized = true;
+            _state = WriterState.Finalized;
             return;
         }
 
         FlushPendingVideo();
         if (_videoSamples.Count == 0 && _audioSamples.Count == 0)
         {
+            _state = WriterState.Idle;
             throw new InvalidOperationException("At least one video or AAC sample is required before finalization.");
         }
 
@@ -294,7 +736,107 @@ public sealed class Mp4Writer : IDisposable
             _output.Write(moov, 0, moov.Length);
         }
 
-        _finalized = true;
+        _state = WriterState.Finalized;
+    }
+
+    /// <summary>以非同步方式 backpatch mdat 並附加完整的 movie metadata，使用 caller stream 的 <see cref="Stream.WriteAsync(byte[], int, int, CancellationToken)"/>。</summary>
+    /// <param name="cancellationToken">可取消 finalization 外部輸出的 token。</param>
+    /// <returns>代表非同步 finalization 的工作。</returns>
+    /// <remarks>
+    /// 成功 finalization 後再次呼叫 <see cref="FinalizeFile"/>、<see cref="FinalizeFileAsync"/>、<see cref="Complete"/> 或 <see cref="Finish"/> 皆不會再新增 bytes。一旦跨越 output-risk boundary 後取消或失敗，writer 會進入 terminal Faulted 狀態。
+    /// </remarks>
+    public Task FinalizeFileAsync(CancellationToken cancellationToken = default)
+    {
+        EnterFinalize();
+        if (_state == WriterState.Finalized) return Task.CompletedTask;
+        cancellationToken.ThrowIfCancellationRequested();
+        return FinalizeFileAsyncCore(cancellationToken);
+    }
+
+    private async Task FinalizeFileAsyncCore(CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (_mode == Mp4WriteMode.Fragmented)
+            {
+                await FinalizeFragmentedAsync(cancellationToken).ConfigureAwait(false);
+                _state = WriterState.Finalized;
+                return;
+            }
+
+            await FlushPendingVideoAsync(cancellationToken).ConfigureAwait(false);
+            if (_videoSamples.Count == 0 && _audioSamples.Count == 0)
+            {
+                _state = WriterState.Idle;
+                throw new InvalidOperationException("At least one video or AAC sample is required before finalization.");
+            }
+
+            await EnterOutputRiskAsync(cancellationToken).ConfigureAwait(false);
+            var endOfMdat = _output.Position;
+            var mdatSize = checked((ulong)(endOfMdat - _mdatStart));
+            var restore = _output.Position;
+            _output.Seek(_mdatStart, SeekOrigin.Begin);
+            await _output.WriteAsync(MdatHeaderBytes(mdatSize), 0, 16, cancellationToken).ConfigureAwait(false);
+            _output.Seek(restore, SeekOrigin.Begin);
+
+            if (_mode == Mp4WriteMode.FastStart)
+            {
+                await RelocateMdatForFastStartAsync(endOfMdat, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                var moov = BuildMovieBox(0);
+                await _output.WriteAsync(moov, 0, moov.Length, cancellationToken).ConfigureAwait(false);
+            }
+
+            _state = WriterState.Finalized;
+        }
+        catch (OperationCanceledException)
+        {
+            _state = WriterState.Faulted;
+            throw;
+        }
+        catch (Exception) when (_state == WriterState.Active)
+        {
+            _state = WriterState.Faulted;
+            throw;
+        }
+    }
+
+    private async Task FinalizeFragmentedAsync(CancellationToken cancellationToken)
+    {
+        CommitPendingFragmentedVideo();
+        if (!_fragmentedHasVideoSample)
+        {
+            _state = WriterState.Idle;
+            throw new InvalidOperationException("Fragmented MP4 output requires at least one video sample.");
+        }
+
+        await FlushFragmentAsync(null, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static byte[] MdatHeaderBytes(ulong mdatSize)
+    {
+        var buffer = new byte[16];
+        buffer[0] = 0;
+        buffer[1] = 0;
+        buffer[2] = 0;
+        buffer[3] = 1;
+        buffer[4] = (byte)'m';
+        buffer[5] = (byte)'d';
+        buffer[6] = (byte)'a';
+        buffer[7] = (byte)'t';
+        for (var i = 0; i < 8; i++)
+        {
+            buffer[8 + i] = (byte)(mdatSize >> (56 - i * 8));
+        }
+        return buffer;
+    }
+
+    private Task EnterOutputRiskAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.CompletedTask;
     }
 
     public void Complete() => FinalizeFile();
@@ -565,36 +1107,9 @@ public sealed class Mp4Writer : IDisposable
 
     private void FlushFragment(long? boundaryDts)
     {
-        var selected = new List<FragmentSample>();
-        foreach (var sample in _fragmentSamples)
-        {
-            if (!boundaryDts.HasValue || sample.Dts < boundaryDts.Value)
-            {
-                selected.Add(sample);
-            }
-        }
-
-        if (selected.Count == 0) return;
-        if (!selected.Any(sample => sample.Video))
-        {
-            if (!boundaryDts.HasValue)
-            {
-                throw new InvalidOperationException("A fragmented MP4 fragment must contain video.");
-            }
-
-            return;
-        }
-
-        var firstVideo = selected.First(sample => sample.Video);
-        if (!firstVideo.IsKeyFrame)
-        {
-            throw new InvalidOperationException("A fragmented MP4 fragment must start with a video keyframe.");
-        }
-
-        var video = selected.Where(sample => sample.Video).ToList();
-        var audio = selected.Where(sample => !sample.Video).ToList();
-        var videoPayloadBytes = video.Sum(sample => (long)sample.EncodedSize);
-        var audioPayloadBytes = audio.Sum(sample => (long)sample.EncodedSize);
+        var selected = SelectFragmentSamples(boundaryDts);
+        if (selected == null) return;
+        var (video, audio, videoPayloadBytes, audioPayloadBytes) = selected.Value;
         var payloadBytes = checked(videoPayloadBytes + audioPayloadBytes);
         var mdatSize = checked(payloadBytes + 8);
         if (mdatSize > uint.MaxValue)
@@ -621,7 +1136,56 @@ public sealed class Mp4Writer : IDisposable
         foreach (var sample in video) WriteFragmentPayload(sample);
         foreach (var sample in audio) WriteFragmentPayload(sample);
 
-        foreach (var sample in selected)
+        CommitFragmentFlush(video, audio, nextSequenceNumber);
+    }
+
+    private (List<FragmentSample> Video, List<FragmentSample> Audio, long VideoPayloadBytes, long AudioPayloadBytes)? SelectFragmentSamples(long? boundaryDts)
+    {
+        var selected = new List<FragmentSample>();
+        foreach (var sample in _fragmentSamples)
+        {
+            if (!boundaryDts.HasValue || sample.Dts < boundaryDts.Value)
+            {
+                selected.Add(sample);
+            }
+        }
+
+        if (selected.Count == 0) return null;
+        if (!selected.Any(sample => sample.Video))
+        {
+            if (!boundaryDts.HasValue)
+            {
+                throw new InvalidOperationException("A fragmented MP4 fragment must contain video.");
+            }
+
+            return null;
+        }
+
+        var firstVideo = selected.First(sample => sample.Video);
+        if (!firstVideo.IsKeyFrame)
+        {
+            throw new InvalidOperationException("A fragmented MP4 fragment must start with a video keyframe.");
+        }
+
+        var video = selected.Where(sample => sample.Video).ToList();
+        var audio = selected.Where(sample => !sample.Video).ToList();
+        var videoPayloadBytes = video.Sum(sample => (long)sample.EncodedSize);
+        var audioPayloadBytes = audio.Sum(sample => (long)sample.EncodedSize);
+        return (video, audio, videoPayloadBytes, audioPayloadBytes);
+    }
+
+    private void CommitFragmentFlush(
+        IList<FragmentSample> video,
+        IList<FragmentSample> audio,
+        uint nextSequenceNumber)
+    {
+        foreach (var sample in video)
+        {
+            _fragmentSamples.Remove(sample);
+            _fragmentBufferedBytes = checked(_fragmentBufferedBytes - sample.EncodedSize);
+        }
+
+        foreach (var sample in audio)
         {
             _fragmentSamples.Remove(sample);
             _fragmentBufferedBytes = checked(_fragmentBufferedBytes - sample.EncodedSize);
@@ -1370,8 +1934,55 @@ public sealed class Mp4Writer : IDisposable
 
     private void EnsureWritable()
     {
+        ThrowIfDisposed();
+        ThrowIfFaulted();
+        if (_state == WriterState.Active)
+        {
+            throw new InvalidOperationException("An MP4 writer operation is already in progress.");
+        }
+        if (_state == WriterState.Finalized)
+        {
+            throw new InvalidOperationException("The MP4 writer has already been finalized.");
+        }
+    }
+
+    private void ThrowIfDisposed()
+    {
         if (_disposed) throw new ObjectDisposedException(nameof(Mp4Writer));
-        if (_finalized) throw new InvalidOperationException("The MP4 writer has already been finalized.");
+    }
+
+    private void ThrowIfFaulted()
+    {
+        if (_state == WriterState.Faulted)
+        {
+            throw new InvalidOperationException(
+                "The MP4 writer is in a faulted state; the output may be incomplete.");
+        }
+    }
+
+    private void EnterOperation()
+    {
+        EnsureWritable();
+        _state = WriterState.Active;
+    }
+
+    private void EnterFinalize()
+    {
+        ThrowIfDisposed();
+        ThrowIfFaulted();
+        if (_state == WriterState.Active)
+        {
+            throw new InvalidOperationException("An MP4 writer operation is already in progress.");
+        }
+        if (_state != WriterState.Finalized)
+        {
+            _state = WriterState.Active;
+        }
+    }
+
+    private void ExitOperationToIdleOnSyncFailure()
+    {
+        if (_state == WriterState.Active) _state = WriterState.Idle;
     }
 
     private sealed class PendingVideoAccessUnit
@@ -1451,5 +2062,13 @@ public sealed class Mp4Writer : IDisposable
         public CompositionEntry(int count, long offset) { Count = count; Offset = offset; }
         public int Count { get; }
         public long Offset { get; }
+    }
+
+    private enum WriterState
+    {
+        Idle,
+        Active,
+        Finalized,
+        Faulted
     }
 }
