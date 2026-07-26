@@ -76,6 +76,122 @@ public sealed class Mp4RoundTripTests
         }
     }
 
+    [Theory]
+    [InlineData(false, Mp4WriteMode.Progressive)]
+    [InlineData(false, Mp4WriteMode.FastStart)]
+    [InlineData(false, Mp4WriteMode.Fragmented)]
+    [InlineData(true, Mp4WriteMode.Progressive)]
+    [InlineData(true, Mp4WriteMode.FastStart)]
+    [InlineData(true, Mp4WriteMode.Fragmented)]
+    public async System.Threading.Tasks.Task AsyncWriterReaderMatrixPreservesPayloadTimingAndConfiguration(bool h265, Mp4WriteMode mode)
+    {
+        await AssertAsyncRoundTrip(h265 ? FixtureData.H265 : FixtureData.H264, mode);
+    }
+
+    [Theory]
+    [InlineData(false, Mp4WriteMode.Progressive, "h264")]
+    [InlineData(false, Mp4WriteMode.FastStart, "h264")]
+    [InlineData(false, Mp4WriteMode.Fragmented, "h264")]
+    [InlineData(true, Mp4WriteMode.Progressive, "hevc")]
+    [InlineData(true, Mp4WriteMode.FastStart, "hevc")]
+    [InlineData(true, Mp4WriteMode.Fragmented, "hevc")]
+    public async System.Threading.Tasks.Task AsyncGeneratedLayoutPassesFfprobeAndFfmpegValidation(
+        bool h265,
+        Mp4WriteMode mode,
+        string expectedVideoCodec)
+    {
+        await AssertAsyncExternalTools(h265 ? FixtureData.H265 : FixtureData.H264, mode, expectedVideoCodec);
+    }
+
+    [Theory]
+    [InlineData(false, Mp4WriteMode.Progressive)]
+    [InlineData(false, Mp4WriteMode.FastStart)]
+    [InlineData(false, Mp4WriteMode.Fragmented)]
+    [InlineData(true, Mp4WriteMode.Progressive)]
+    [InlineData(true, Mp4WriteMode.FastStart)]
+    [InlineData(true, Mp4WriteMode.Fragmented)]
+    public async System.Threading.Tasks.Task AsyncOutputIsByteIdenticalToSyncOutput(bool h265, Mp4WriteMode mode)
+    {
+        var fixture = h265 ? FixtureData.H265 : FixtureData.H264;
+        var syncPath = Path.Combine(Path.GetTempPath(), "dotcore-mp4-sync-parity-" + Guid.NewGuid().ToString("N") + ".mp4");
+        var asyncPath = Path.Combine(Path.GetTempPath(), "dotcore-mp4-async-parity-" + Guid.NewGuid().ToString("N") + ".mp4");
+        try
+        {
+            FixtureData.WriteMixedFile(syncPath, fixture, mode);
+            await FixtureData.WriteMixedFileAsync(asyncPath, fixture, mode);
+            Assert.Equal(
+                System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(syncPath)),
+                System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(asyncPath)));
+        }
+        finally
+        {
+            if (File.Exists(syncPath)) File.Delete(syncPath);
+            if (File.Exists(asyncPath)) File.Delete(asyncPath);
+        }
+    }
+
+    private static async System.Threading.Tasks.Task AssertAsyncRoundTrip(VideoFixture fixture, Mp4WriteMode mode)
+    {
+        var path = Path.Combine(Path.GetTempPath(), "dotcore-mp4-async-roundtrip-" + Guid.NewGuid().ToString("N") + ".mp4");
+        try
+        {
+            await FixtureData.WriteMixedFileAsync(path, fixture, mode);
+            using var stream = File.OpenRead(path);
+            using var reader = await Mp4Reader.CreateAsync(stream);
+            Assert.Equal(fixture.Configuration.Codec, reader.VideoConfiguration!.Codec);
+            Assert.Equal(fixture.Configuration.Vps, reader.VideoConfiguration.Vps);
+            Assert.Equal(fixture.Configuration.Sps, reader.VideoConfiguration.Sps);
+            Assert.Equal(fixture.Configuration.Pps, reader.VideoConfiguration.Pps);
+            Assert.Equal(fixture.Configuration.NalLengthSize, reader.VideoConfiguration.NalLengthSize);
+            Assert.Equal(FixtureData.AacConfiguration.AudioSpecificConfig, reader.AudioConfiguration!.AudioSpecificConfig);
+
+            var video = reader.ReadVideoNalUnits().ToArray();
+            var audio = reader.ReadAudioSamples().ToArray();
+            Assert.Equal(fixture.Frames.Count, video.Length);
+            for (var i = 0; i < video.Length; i++)
+            {
+                Assert.Equal(fixture.Frames[i], video[i].Data);
+                Assert.Equal(TimeSpan.FromMilliseconds(i * 40), video[i].PresentationTimestamp);
+                Assert.Equal(fixture.KeyFrames[i], video[i].IsKeyFrame);
+            }
+
+            Assert.Equal(4, audio.Length);
+            Assert.Equal(FixtureData.AacAccessUnits[0], audio[0].Data);
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
+    private static async System.Threading.Tasks.Task AssertAsyncExternalTools(
+        VideoFixture fixture,
+        Mp4WriteMode mode,
+        string expectedVideoCodec)
+    {
+        var path = Path.Combine(Path.GetTempPath(), "dotcore-mp4-async-tools-" + Guid.NewGuid().ToString("N") + ".mp4");
+        try
+        {
+            await FixtureData.WriteMixedFileAsync(path, fixture, mode);
+            var ffprobe = RequireTool("ffprobe");
+            var ffmpeg = RequireTool("ffmpeg");
+            var probe = Run(ffprobe, "-v error -show_format -show_streams -of json " + Quote(path));
+            Assert.Equal(0, probe.ExitCode);
+            Assert.Contains("mov,mp4", probe.Stdout, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(expectedVideoCodec, probe.Stdout, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("aac", probe.Stdout, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(mode == Mp4WriteMode.Fragmented, ContainsBox(File.ReadAllBytes(path), "moof"));
+
+            var decode = Run(ffmpeg, "-v error -i " + Quote(path) + " -map 0 -f null -");
+            Assert.Equal(0, decode.ExitCode);
+            Assert.True(string.IsNullOrWhiteSpace(decode.Stderr), Redact(decode.Stderr));
+        }
+        finally
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
+    }
+
     private static void AssertExternalTools(
         VideoFixture fixture,
         Mp4WriteMode mode,

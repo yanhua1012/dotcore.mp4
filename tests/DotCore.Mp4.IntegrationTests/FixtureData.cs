@@ -69,39 +69,96 @@ internal static class FixtureData
         using (var stream = File.Create(path))
         using (var writer = new Mp4Writer(stream, new Mp4WriterOptions { Mode = mode }))
         {
-            writer.SetVideoCodecConfiguration(video.Configuration);
-            writer.SetAudioCodecConfiguration(AacConfiguration);
-            var audioDuration = TimeSpan.FromTicks((long)Math.Round(TimeSpan.TicksPerSecond * 1024.0 / AacConfiguration.SampleRate));
-            var audio = AacAccessUnits.Take(4).ToArray();
-            var videoIndex = 0;
-            var audioIndex = 0;
-            while (videoIndex < video.Frames.Count || audioIndex < audio.Length)
-            {
-                var videoTimestamp = TimeSpan.FromMilliseconds(videoIndex * 40);
-                var audioTimestamp = TimeSpan.FromTicks(audioDuration.Ticks * audioIndex);
-                if (videoIndex < video.Frames.Count &&
-                    (audioIndex >= audio.Length || videoTimestamp <= audioTimestamp))
-                {
-                    writer.WriteVideoNalUnit(new EncodedVideoNalUnit(
-                        video.Frames[videoIndex],
-                        videoTimestamp,
-                        videoTimestamp,
-                        TimeSpan.FromMilliseconds(40),
-                        video.KeyFrames[videoIndex]));
-                    videoIndex++;
-                }
-                else
-                {
-                    writer.WriteAudioSample(new EncodedAudioSample(
-                        audio[audioIndex],
-                        audioTimestamp,
-                        audioTimestamp,
-                        audioDuration));
-                    audioIndex++;
-                }
-            }
-
+            WriteMixedCore(writer, video);
             writer.FinalizeFile();
+        }
+    }
+
+    public static async System.Threading.Tasks.Task WriteMixedFileAsync(
+        string path,
+        VideoFixture video,
+        Mp4WriteMode mode,
+        System.Threading.CancellationToken cancellationToken = default)
+    {
+        var access = mode == Mp4WriteMode.FastStart ? FileAccess.ReadWrite : FileAccess.Write;
+        await using (var stream = new FileStream(path, FileMode.Create, access, FileShare.Read, 1 << 16, FileOptions.Asynchronous))
+        using (var writer = await Mp4Writer.CreateAsync(stream, new Mp4WriterOptions { Mode = mode }, true, cancellationToken))
+        {
+            await WriteMixedCoreAsync(writer, video, cancellationToken);
+            await writer.FinalizeFileAsync(cancellationToken);
+        }
+    }
+
+    private static void WriteMixedCore(Mp4Writer writer, VideoFixture video)
+    {
+        writer.SetVideoCodecConfiguration(video.Configuration);
+        writer.SetAudioCodecConfiguration(AacConfiguration);
+        var audioDuration = TimeSpan.FromTicks((long)Math.Round(TimeSpan.TicksPerSecond * 1024.0 / AacConfiguration.SampleRate));
+        var audio = AacAccessUnits.Take(4).ToArray();
+        var videoIndex = 0;
+        var audioIndex = 0;
+        while (videoIndex < video.Frames.Count || audioIndex < audio.Length)
+        {
+            var videoTimestamp = TimeSpan.FromMilliseconds(videoIndex * 40);
+            var audioTimestamp = TimeSpan.FromTicks(audioDuration.Ticks * audioIndex);
+            if (videoIndex < video.Frames.Count &&
+                (audioIndex >= audio.Length || videoTimestamp <= audioTimestamp))
+            {
+                writer.WriteVideoNalUnit(new EncodedVideoNalUnit(
+                    video.Frames[videoIndex],
+                    videoTimestamp,
+                    videoTimestamp,
+                    TimeSpan.FromMilliseconds(40),
+                    video.KeyFrames[videoIndex]));
+                videoIndex++;
+            }
+            else
+            {
+                writer.WriteAudioSample(new EncodedAudioSample(
+                    audio[audioIndex],
+                    audioTimestamp,
+                    audioTimestamp,
+                    audioDuration));
+                audioIndex++;
+            }
+        }
+    }
+
+    private static async System.Threading.Tasks.Task WriteMixedCoreAsync(
+        Mp4Writer writer,
+        VideoFixture video,
+        System.Threading.CancellationToken cancellationToken)
+    {
+        writer.SetVideoCodecConfiguration(video.Configuration);
+        writer.SetAudioCodecConfiguration(AacConfiguration);
+        var audioDuration = TimeSpan.FromTicks((long)Math.Round(TimeSpan.TicksPerSecond * 1024.0 / AacConfiguration.SampleRate));
+        var audio = AacAccessUnits.Take(4).ToArray();
+        var videoIndex = 0;
+        var audioIndex = 0;
+        while (videoIndex < video.Frames.Count || audioIndex < audio.Length)
+        {
+            var videoTimestamp = TimeSpan.FromMilliseconds(videoIndex * 40);
+            var audioTimestamp = TimeSpan.FromTicks(audioDuration.Ticks * audioIndex);
+            if (videoIndex < video.Frames.Count &&
+                (audioIndex >= audio.Length || videoTimestamp <= audioTimestamp))
+            {
+                await writer.WriteVideoNalUnitAsync(new EncodedVideoNalUnit(
+                    video.Frames[videoIndex],
+                    videoTimestamp,
+                    videoTimestamp,
+                    TimeSpan.FromMilliseconds(40),
+                    video.KeyFrames[videoIndex]), cancellationToken);
+                videoIndex++;
+            }
+            else
+            {
+                await writer.WriteAudioSampleAsync(new EncodedAudioSample(
+                    audio[audioIndex],
+                    audioTimestamp,
+                    audioTimestamp,
+                    audioDuration), cancellationToken);
+                audioIndex++;
+            }
         }
     }
 

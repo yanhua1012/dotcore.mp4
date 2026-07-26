@@ -62,12 +62,12 @@
 
 ## 7. Cross-layout compatibility 與 integration verification
 
-- [ ] 7.1 擴充fixed-output generator/tests，對H.264/H.265 × progressive/faststart/fragmented執行sync、pure async及sequential mixed paths，先保存未支援async matrix的failing result。
-- [ ] 7.2 更新approved compatibility baseline，只核准明列async signatures與XML docs；既有members、`netstandard2.0` target及production package set不得改變，fixed-output hashes不得更新。
-- [ ] 7.3 在integration fixtures以`FileOptions.Asynchronous`加入actual async file-backed Stream write/read helpers，使用public Writer async factory/write/finalize與Reader async factory。
-- [ ] 7.4 擴充H.264/AAC及H.265/AAC三種layout integration matrix，assert codec、payload、PTS/DTS/duration、keyframe、event order及sync output parity。
-- [ ] 7.5 對六種async codec/layout outputs執行PATH-resolved `ffprobe`及`ffmpeg -v error`，工具缺少時明確回報未完成而不宣稱通過。
-- [ ] 7.6 執行unit與integration projects，確認兩者皆有非零discovered/passed count、無silent skip，且所有cross-layout comparisons green。
+- [x] 7.1 擴充fixed-output generator/tests，對H.264/H.265 × progressive/faststart/fragmented執行sync、pure async及sequential mixed paths，先保存未支援async matrix的failing result。
+- [x] 7.2 更新approved compatibility baseline，只核准明列async signatures與XML docs；既有members、`netstandard2.0` target及production package set不得改變，fixed-output hashes不得更新。
+- [x] 7.3 在integration fixtures以`FileOptions.Asynchronous`加入actual async file-backed Stream write/read helpers，使用public Writer async factory/write/finalize與Reader async factory。
+- [x] 7.4 擴充H.264/AAC及H.265/AAC三種layout integration matrix，assert codec、payload、PTS/DTS/duration、keyframe、event order及sync output parity。
+- [x] 7.5 對六種async codec/layout outputs執行PATH-resolved `ffprobe`及`ffmpeg -v error`，工具缺少時明確回報未完成而不宣稱通過。
+- [x] 7.6 執行unit與integration projects，確認兩者皆有非零discovered/passed count、無silent skip，且所有cross-layout comparisons green。
 
 ## 8. Console async demonstration
 
