@@ -22,7 +22,7 @@ internal static class FixtureData
         "//FQQBHf/N4CAExhdmM2MC4zMS4xMDIAAnClW2CobVELQn3/p149pm99eZPHs3JIecki5J8IEyVMl0dpEYVMlGFYllqdLU7Vpyq0k5v+qSwHIlWYz8aOo1d2txqm2ybapnBEEU1qa0yUyUyUDAwMDAwMDAwMDAwMDAwMbNgyKWWWKKKKKKKKKKKKKKKLgP/xUEAVn/wBEpTaiV2WS6slUlkun/9j/f8daeert//V/9vv1rjicfp//W/6/fzrrWtf1//qf+f11rrjVie7C0ajXrNN3ksS/+qHD1KU2y7neu+j130beYB9Od5gH0+jzwH0+iXmAAfTn+jzzAA+eJ2z69iNpCQhhERRQxRfKIcS+QlUDGwYlKoGlBgaVTgwMiBgY3Li4MDAwMDUIj0UxU886p59k+zmn+Xy5uD/8VBAD7/8ARaVpojdIuyPVkug7f/2P+v386d/xrX2//z/+V+b6u5x//e9vOtXq9B3ujmsNspna0YxR2X2bDY2RNlvXsGyz+Xq2CJ/LZ8OYsFMQaEmmne+H4sz4n30nz+Rt/Mft17DNozEYmFI4rD++R3LumghbhzNOZ33eP/xUEABn/wBGIG0cA==";
 
     public static readonly AacCodecConfiguration AacConfiguration =
-        new AacCodecConfiguration(new byte[] { 0x12, 0x10 }, 44100, 2);
+        AacCodecConfiguration.CreateAacLc(44100, 2);
 
     public static VideoFixture H264
     {

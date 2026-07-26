@@ -52,6 +52,43 @@ internal static class AacConfigParser
         };
     }
 
+    public static byte[] Encode(int sampleRate, int channelConfiguration, int audioObjectType = 2)
+    {
+        if (audioObjectType < 1 || audioObjectType > 31)
+        {
+            throw new ArgumentOutOfRangeException(nameof(audioObjectType), "Audio object type must be between 1 and 31.");
+        }
+
+        if (sampleRate <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(sampleRate), "Sample rate must be greater than zero.");
+        }
+
+        if (channelConfiguration < 1 || channelConfiguration > 7)
+        {
+            throw new ArgumentOutOfRangeException(nameof(channelConfiguration), "Only explicit MPEG-4 channel configurations one through seven are supported.");
+        }
+
+        var sampleRateIndex = Array.IndexOf(SampleRates, sampleRate);
+
+        var writer = new BitWriter();
+        writer.WriteBits((uint)audioObjectType, 5);
+
+        if (sampleRateIndex >= 0)
+        {
+            writer.WriteBits((uint)sampleRateIndex, 4);
+        }
+        else
+        {
+            writer.WriteBits(15, 4);
+            writer.WriteBits((uint)sampleRate, 24);
+        }
+
+        writer.WriteBits((uint)channelConfiguration, 4);
+
+        return writer.ToByteArray();
+    }
+
     private static int ReadAudioObjectType(BitReader reader)
     {
         var value = (int)reader.ReadBits(5);
@@ -77,6 +114,42 @@ internal static class AacConfigParser
         }
 
         return SampleRates[index];
+    }
+
+    private sealed class BitWriter
+    {
+        private byte[] _buffer;
+        private int _bitPosition;
+
+        public BitWriter(int initialByteCapacity = 8)
+        {
+            _buffer = new byte[initialByteCapacity];
+        }
+
+        public void WriteBits(uint value, int count)
+        {
+            for (var i = count - 1; i >= 0; i--)
+            {
+                var bit = (byte)((value >> i) & 1);
+                var byteIndex = _bitPosition / 8;
+                var bitIndex = 7 - (_bitPosition % 8);
+                if (byteIndex >= _buffer.Length)
+                {
+                    Array.Resize(ref _buffer, _buffer.Length * 2);
+                }
+
+                _buffer[byteIndex] |= (byte)(bit << bitIndex);
+                _bitPosition++;
+            }
+        }
+
+        public byte[] ToByteArray()
+        {
+            var byteLength = (_bitPosition + 7) / 8;
+            var result = new byte[byteLength];
+            Buffer.BlockCopy(_buffer, 0, result, 0, byteLength);
+            return result;
+        }
     }
 
     private sealed class BitReader

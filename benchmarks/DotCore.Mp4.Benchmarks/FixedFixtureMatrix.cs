@@ -30,7 +30,7 @@ internal static class FixedFixtureMatrix
 
     public static AacCodecConfiguration AacConfiguration()
     {
-        return new AacCodecConfiguration(new byte[] { 0x12, 0x10 }, 44100, 2);
+        return AacCodecConfiguration.CreateAacLc(44100, 2);
     }
 
     public static byte[] VideoNal(VideoCodec codec, int size, bool keyFrame, int seed)

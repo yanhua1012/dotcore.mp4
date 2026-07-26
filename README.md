@@ -4,10 +4,10 @@
 
 ## 支援範圍
 
-- `Mp4Writer` 支援 progressive、faststart 與 fragmented 三種 layout，且都支援單一 H.264 或 H.265 視訊軌及單一 AAC 音訊軌。舊有 `Mp4Writer(Stream, bool)` 維持 progressive 預設。
+- `Mp4Writer` 支援 progressive、faststart 與 fragmented 三種 layout，且都支援單一 H.264 或 H.265 視訊軌及單一 AAC 音訊軌。同步建構子與 additive async factory/write/finalize API 都涵蓋三種 layout；舊有 `Mp4Writer(Stream, bool)` 維持 progressive 預設。
 - H.264 必須提供 SPS/PPS；H.265 必須提供 VPS/SPS/PPS；writer 會分別寫入 `avcC`/`hvcC`。
 - Parameter sets 必須各自只含一個正確類型的 NAL unit：H.264 SPS/PPS 為 type 7/8，H.265 VPS/SPS/PPS 為 type 32/33/34；錯誤標示會在寫入前拒絕。
-- AAC 必須提供與 sample rate、channel configuration 一致的 AudioSpecificConfig；不會從 ADTS header 猜測設定。
+- AAC 可呼叫 `AacCodecConfiguration.CreateAacLc(sampleRate, channelConfig)` 或 `new AacCodecConfiguration(sampleRate, channelConfig)` 自動根據 sample rate 與 channel configuration 生成相符的 AudioSpecificConfig 標頭，亦支援直接傳入既有 AudioSpecificConfig 二進位標頭進行宣告與驗證。
 - 同一 PTS/DTS 的連續 video NAL units 會聚合成一個 MP4 sample；reader 會再依原始順序逐 NAL 發出事件。AAC access unit 一個對應一個 MP4 sample。
 - writer 時間戳公開為 `TimeSpan`，內建產物的 MP4 track timescale 使用 10,000,000，因此 writer 不接受無法精確換算的時間。reader 遇到 FFmpeg 常見的其他 timescale 時，會以 deterministic nearest-tick 規則還原至 100 ns `TimeSpan` 精度。
 
@@ -21,7 +21,7 @@ writer 的 stream 契約依 mode 不同：
 | `FastStart` | `CanRead` + `CanWrite` + `CanSeek` + `SetLength` | `ftyp`、`moov`、`mdat` | 完成後可由檔頭取得 metadata 的快速起播檔案 |
 | `Fragmented` | 僅需 `CanWrite` | initial `ftyp`/`moov`，後接 `moof`/`mdat` | 依 keyframe 持續提交已完成 fragments |
 
-兩端預設都不會關閉 caller-owned stream，可用建構子的 `leaveOpen: false` 明確交由元件關閉。writer 必須呼叫 `FinalizeFile()`（或 `Complete()`/`Finish()`）完成最後 metadata/fragment；成功完成後重複呼叫是 idempotent。
+兩端預設都不會關閉 caller-owned stream，可用建構子或 async factory 的 `leaveOpen: false` 明確交由成功建立的元件在 `Dispose()` 時關閉。writer 必須呼叫 `FinalizeFile()`（或 `Complete()`/`Finish()`）完成最後 metadata/fragment；async writer 則可呼叫 `FinalizeFileAsync()`。成功完成後跨同步／非同步 finalize aliases 重複呼叫都是 idempotent。
 
 Faststart 在 finalization 時以固定 64 KiB buffer 向後搬移既有 `mdat`，不會把完整 payload 載入 managed memory。只有完成且成功關閉的檔案才保證 `moov` 位於 `mdat` 前；它不是錄影進行中的 live playback 保證。若需要原子交付，請寫入 temporary path，完成後再 rename。
 
@@ -31,35 +31,39 @@ Fragmented mode 在第一個 media sample 時凍結 codec tracks，要求至少�
 
 Reader 會在建構時將完整 MP4 snapshot 至 managed memory，不會 tail-follow 持續成長中的 fMP4。單一輸入上限為 256 MiB，累積最多 1,000,000 samples，各 sample table 最多 1,000,000 entries，每個 container 最多 100,000 boxes，另限制 4,096 fragments、每 fragment 1,024 `traf` 與 4,096 `trun`。MPEG-4 descriptor nesting 最深 32 層且最多走訪 4,096 個 descriptors。超出限制、fragment sequence/timeline 倒退、sample overlap 或 range 不在對應 `mdat` 內，都會在大額配置或 payload delivery 前以 `Mp4FormatException` 拒絕。
 
-基本使用方式：
+同步基本使用方式：
 
+<!-- snippet: sync-round-trip -->
 ```csharp
-using var output = File.Create("recording.mp4");
-using var writer = new Mp4Writer(
-    output,
-    new Mp4WriterOptions
-    {
-        Mode = Mp4WriteMode.Fragmented,
-        MaximumFragmentBufferBytes = 16 * 1024 * 1024
-    });
-writer.SetVideoCodecConfiguration(videoConfiguration);
-writer.SetAudioCodecConfiguration(aacConfiguration);
-writer.WriteVideoNalUnit(new EncodedVideoNalUnit(nal, pts, dts, duration, isKeyFrame));
-writer.WriteAudioSample(new EncodedAudioSample(aacBytes, pts, dts, duration));
-writer.FinalizeFile();
+{
+    using var syncOutput = File.Create("recording.mp4");
+    using var syncWriter = new Mp4Writer(
+        syncOutput,
+        new Mp4WriterOptions
+        {
+            Mode = Mp4WriteMode.Fragmented,
+            MaximumFragmentBufferBytes = 16 * 1024 * 1024
+        });
+    syncWriter.SetVideoCodecConfiguration(videoConfiguration);
+    syncWriter.SetAudioCodecConfiguration(aacConfiguration);
+    syncWriter.WriteVideoNalUnit(new EncodedVideoNalUnit(nal, pts, dts, duration, isKeyFrame));
+    syncWriter.WriteAudioSample(new EncodedAudioSample(aacBytes, pts, dts, duration));
+    syncWriter.FinalizeFile();
+}
 
-using var input = File.OpenRead("recording.mp4");
-using var reader = new Mp4Reader(input);
-reader.VideoNalUnitRead += (_, sample) => Console.WriteLine(sample.PresentationTimestamp);
-reader.AacSampleRead += (_, sample) => Console.WriteLine(sample.Data.Length);
-reader.Read();
+using var syncInput = File.OpenRead("recording.mp4");
+using var syncReader = new Mp4Reader(syncInput);
+syncReader.VideoNalUnitRead += (_, sample) => Console.WriteLine(sample.PresentationTimestamp);
+syncReader.AacSampleRead += (_, sample) => Console.WriteLine(sample.Data.Length);
+syncReader.Read();
 ```
+<!-- endsnippet -->
 
 ## 非同步 I/O
 
 元件在保留既有同步 API 的同時，新增 additive 的 `Task`/`CancellationToken` async surface，讓真正支援非阻塞 async 的底層 Stream（例如以 `FileOptions.Asynchronous` 開啟的 `FileStream`）在 I/O 等待期間能釋放 caller thread。`Task` 與 `Stream.ReadAsync(byte[], int, int, CancellationToken)`/`WriteAsync(byte[], int, int, CancellationToken)` 可由既有 `netstandard2.0` target 使用，library 內部 await 一律使用 `ConfigureAwait(false)`，且不使用 `Task.Run`、`.Result`、`.Wait()` 或 sync-over-async。
 
-Reader 只非同步化 snapshot；factory 完成後的 parsing、events 與列舉仍維持同步 memory-only 行為。
+Reader 只非同步化完整 snapshot；`CreateAsync` 仍要求 readable、seekable Stream，並在結束時嘗試恢復原始 position。預先取消或 `ReadAsync` 中途取消／失敗都不會回傳 partial Reader，也不會因 `leaveOpen: false` 關閉 caller Stream；只有成功回傳的 Reader 日後 `Dispose()` 才依 `leaveOpen` 決定 ownership。factory 完成後的 parsing、events 與列舉仍維持同步 memory-only 行為，沒有 `OpenAsync` 或 async enumeration aliases。
 
 <!-- snippet: reader-create-async -->
 ```csharp
@@ -107,7 +111,7 @@ writer.Dispose();
 ```
 <!-- endsnippet -->
 
-同一 Writer 一次最多執行一個 stateful configure、write、finalize 或 dispose operation；overlap 會以 `InvalidOperationException` fail-fast 拒絕（不排隊、不改變 active operation 或 media state），但依序混用 sync/async calls 合法。成功 finalization 後 `FinalizeFile()`、`FinalizeFileAsync()`、`Complete()` 與 `Finish()` 交叉重複呼叫皆不新增 bytes。
+同一 Writer 以 atomic operation gate 保證一次最多執行一個 stateful configure、write、finalize 或 dispose operation；overlap 會以 `InvalidOperationException` fail-fast 拒絕（不排隊、不改變 active operation 或 media state），active operation 期間的 `Dispose()` 也會被拒絕，但依序混用 sync/async calls 合法。成功 finalization 後 `FinalizeFile()`、`FinalizeFileAsync()`、`Complete()` 與 `Finish()` 交叉重複呼叫皆不新增 bytes。
 
 對已成功回傳的 Writer，一旦新增 async operation 開始任何可能改變 caller output 的 external `WriteAsync`、faststart `SetLength`、Seek/Position backpatch 或 relocation control，之後的 cancellation 或任何 exception 都會將 Writer 標記為 terminal `Faulted`，並以指出「output may be incomplete」的 `InvalidOperationException` 拒絕後續所有 sync/async configure、write 與 finalize methods/aliases；只有無 active operation 時的 `Dispose()` 仍可用。合法 Idle operation 的 already-cancelled token 在 external I/O 與 state mutation 前取消且保持 Writer 可用；最後一個 async I/O 成功後不再作 late cancellation check，會在 operation gate 內原子 commit 成功。
 
@@ -123,6 +127,8 @@ Async 不額外承諾 `FlushAsync()`、durable storage 或原子檔案交付。`
 - H.264/H.265 raw/Annex-B、single/multi/tiny NAL 的 progressive/faststart ingestion。
 - H.264/H.265 fragmented short/long GOP flush，以及 faststart finalization。
 - 每個 scenario 的 logical payload/sample/NAL/GOP identity、managed allocation、GC、throughput、同步 Stream calls、commit/dirty state、command、runtime/environment 與 result path/hash。
+
+`reduce-mp4-byte-copies` 只調整內部 ownership 與 materialization：Reader 以單一 owned payload 交付內部 sample、Writer 以 NAL ranges/fragment payload sources 保存已擁有的資料，fragment metadata 則單次建立後原地 patch。Public constructors、events、exception/stream ownership、sample 在 Reader dispose 後的 lifetime 與 caller 可見的 `Data` defensive copy 均不變，也不新增 borrowed-memory API；compatibility baseline 與 fixed-output SHA-256 用來守住 public surface、production dependencies 和 MP4 bytes。
 
 Tracked `Baselines/compatibility.json` 鎖定 public API、`netstandard2.0` target 與 production 顯式 package 集合；`Baselines/fixed-outputs.json` 鎖定 H.264/H.265 × 三種 layout 的 SHA-256、top-level box/payload 摘要及 public Reader round-trip。以下命令若 public contract、dependency 或 fixed bytes drift 會非零退出：
 
@@ -149,7 +155,9 @@ dotnet run -c Release --project benchmarks/DotCore.Mp4.Benchmarks --no-build -- 
 
 Comparator 要求所有 scenario identity/parameters完全相同。至少 1 MiB 的 Reader delivery、progressive/faststart ingestion與fragment flush，managed allocation median 必須降低至少 35%；所有 required IDs 的 throughput median不得退化超過 10%。`artifacts/` 不進版控，保留完整 JSON 與 SHA-256 作為本機/CI evidence。
 
-這個 benchmark 不代表 async I/O、streaming Reader、public borrowed-memory API 或 faststart layout redesign；這些都不在目前 copy-reduction scope。Stream call count是 bounded-write診斷，不能取代 throughput gate。
+已保存的 copy-reduction 比較使用五次 baseline 與五次 candidate process：required/allocation-gated Reader delivery scenarios 約降低 49.96%–50.03%，required/allocation-gated progressive/faststart ingestion scenarios 約降低 99.60%–99.74%，required/allocation-gated fragmented flush scenarios 約降低 98.97%–99.55%；faststart finalization throughput delta 為 H.264 -7.03%、H.265 -6.32%，均在該次受控比較的 10% gate 內。這些是固定 fixtures 與記錄環境下的結果，不是所有 workload 或硬體的普遍效能保證。
+
+上述 copy-reduction allocation acceptance 不代表 async I/O、streaming Reader、public borrowed-memory API 或 faststart layout redesign；這些不在該變更 scope。Stream call count是 bounded-write診斷，不能取代 throughput gate。Benchmark JSON 會保存 command、environment 與 absolute result path；不要把 token、credential 或其他秘密放入命令列或敏感路徑，分享 `artifacts/` 前也必須檢查內容，因為 gitignored 不等於已去識別化。
 
 ### 非同步 benchmark
 
@@ -158,12 +166,12 @@ Comparator 要求所有 scenario identity/parameters完全相同。至少 1 MiB 
 三個 family 分開解讀，不得將任一 family 結果外推為普遍單次 throughput 提升：
 
 1. **Immediate-completion memory**：pre-sized `AsyncCountingStream` 量測 paired sync/async Reader snapshot、progressive ingestion、fragment flush 與 faststart finalization 的 ns/op、allocation 與 async call counts；synchronous completion ratio 接近 1，只反映 async dispatch overhead。
-2. **Real file I/O**：以 `FileOptions.Asynchronous` 建立 temporary `FileStream`，量測 Reader snapshot 與 progressive Writer ingestion；fixture/file setup 排除於 measured operation。
-3. **Bounded-concurrency scalability**：`BarrierGatedAsyncCountingStream` 以 shared gate 在 concurrency 1/32/128 同時 pending，證明全部完成、maximum in-flight 等於 concurrency、sync fallback 為零且無 deadlock。
+2. **Real file I/O**：以 `FileOptions.Asynchronous` 建立 temporary `FileStream`，量測 Reader snapshot、progressive Writer ingestion、faststart finalization 與 fragmented flush；faststart 以 `FileAccess.ReadWrite` 開啟，fixture/file setup 排除於 measured operation。
+3. **Bounded-concurrency scalability**：`BarrierGatedAsyncCountingStream` 以 shared gate 在 concurrency 1/32/128 同時 pending，觀察全部完成、maximum in-flight、sync fallback 與 deadlock；comparator 會拒絕 nonzero sync fallback 或未完成 operations，但 maximum in-flight 是量測值，不是 hard gate。
 
 Comparator/self-test 對缺少 async identity、不同 Stream kind/concurrency、nonzero sync fallback 或未完成 operation 以 nonzero 失敗。既有 required sync scenario IDs 套用不退化超過 10% 的 throughput gate；async scenarios 的 `Required` 與 `AllocationGate` 為 false，數值誠實回報而不設定宣稱普遍加速的門檻。
 
-`capture --sync-only` 只量測 sync scenarios；`compare --throughput-only` 只套用 10% throughput regression gate 而跳過 prior change 的 35% allocation gate，用於 additive async change 的 regression 驗證。sync 路徑未變更且 fixed-output byte-identical，故 required sync IDs 不可能 regression；在噪訊高的共享環境下 identical binary 仍可能出現 >10% inter-run 變異，此時 throughput gate 僅作環境診斷而非 regression 證據。
+`capture --sync-only` 只量測 sync scenarios；`compare --throughput-only` 只套用 10% throughput regression gate而跳過 prior change 的 35% allocation gate，用於 async change 的 sync-path regression 驗證。最後的 operation-gate 修正會在同步操作增加原子狀態控制，因此 fixed-output byte-identical 與 allocation parity只能證明 bytes、公開契約及 deterministic work 未漂移，不能單獨證明 throughput。這個 shared devcontainer 的三次量測曾出現 30%–116% per-run CV，identical binary 也可能超過 10% gate；要判定 throughput gate 必須在相同 harness/runtime/OS/processor 的受控或專用環境重跑至少三個獨立 process，共享環境結果只能作噪訊診斷，不能宣稱通過或「不可能 regression」。
 
 ## Build、測試與互通性驗證
 

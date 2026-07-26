@@ -34,7 +34,7 @@ internal static class Program
         if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
 
         var fixture = CreateVideoFixture(codec);
-        var audioConfiguration = new AacCodecConfiguration(new byte[] { 0x12, 0x10 }, 44100, 2);
+        var audioConfiguration = AacCodecConfiguration.CreateAacLc(44100, 2);
         var sampleDuration = TimeSpan.FromMilliseconds(40);
         var audioDuration = TimeSpan.FromTicks((long)Math.Round(TimeSpan.TicksPerSecond * 1024.0 / audioConfiguration.SampleRate));
 

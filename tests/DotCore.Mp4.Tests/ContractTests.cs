@@ -208,7 +208,7 @@ internal static class TestMedia
             16);
 
     public static readonly AacCodecConfiguration AacConfiguration =
-        new AacCodecConfiguration(new byte[] { 0x12, 0x10 }, 44100, 2);
+        AacCodecConfiguration.CreateAacLc(44100, 2);
 
     public static EncodedVideoNalUnit Video(byte[] data, TimeSpan pts, TimeSpan dts, bool isKeyFrame = true)
     {

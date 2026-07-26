@@ -16,13 +16,24 @@ namespace DotCore.Mp4.Tests;
 public sealed class ReadmeSnippetTests
 {
     private static readonly string RepoRoot = FindRepoRoot();
+    private static readonly string[] RequiredSnippetNames =
+    {
+        "sync-round-trip",
+        "reader-create-async",
+        "writer-create-async",
+    };
 
     [Fact]
-    public void ReadmeAsyncSnippetsCompileAgainstCurrentLibrary()
+    public void ReadmeUsageSnippetsCompileAgainstCurrentLibrary()
     {
         var readme = File.ReadAllText(Path.Combine(RepoRoot, "README.md"));
+        foreach (var snippetName in RequiredSnippetNames)
+        {
+            Assert.Contains("<!-- snippet: " + snippetName + " -->", readme);
+        }
+
         var snippets = ExtractMarkedSnippets(readme);
-        Assert.NotEmpty(snippets);
+        Assert.Equal(RequiredSnippetNames.Length, snippets.Count);
 
         var compilation = BuildCompilation(snippets);
         var diagnostics = compilation.GetDiagnostics()
@@ -71,7 +82,7 @@ internal static class ReadmeSnippetHost
     private static readonly VideoCodecConfiguration videoConfiguration =
         VideoCodecConfiguration.CreateH264(new byte[] { 0x67, 0x42, 0x00, 0x1e }, new byte[] { 0x68, 0xce, 0x06, 0xe2 }, 4, 16, 16);
     private static readonly AacCodecConfiguration aacConfiguration =
-        new AacCodecConfiguration(new byte[] { 0x12, 0x10 }, 44100, 2);
+        AacCodecConfiguration.CreateAacLc(44100, 2);
     private static readonly byte[] nal = new byte[] { 0x65, 0x01 };
     private static readonly byte[] aacBytes = new byte[] { 0x21, 0x10 };
     private static readonly TimeSpan pts = TimeSpan.Zero;

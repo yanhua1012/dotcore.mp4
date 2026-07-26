@@ -214,11 +214,40 @@ public sealed class VideoCodecConfiguration
     }
 }
 
-/// <summary>Immutable AAC configuration represented by an MPEG-4 AudioSpecificConfig.</summary>
+/// <summary>
+/// 表示不可變的 AAC 音訊解碼組態（MPEG-4 AudioSpecificConfig）。
+/// <para>
+/// MPEG-4 AudioSpecificConfig 位元結構如下：
+/// <list type="bullet">
+///   <item><description><b>Audio Object Type (5 bits)</b>: 音訊物件類型（例如 2 代表 AAC-LC）。</description></item>
+///   <item><description><b>Sampling Frequency Index (4 bits)</b>: 取樣率索引（0~12 代表標準取樣率；15 代表隨後跟隨 24-bit 自訂取樣率）。</description></item>
+///   <item><description><b>Sampling Frequency (24 bits)</b>: 當索引為 15 時存在，表示明確的取樣率整數值。</description></item>
+///   <item><description><b>Channel Configuration (4 bits)</b>: 聲道配置（1~7 代表 1 至 7 聲道數）。</description></item>
+///   <item><description><b>Reserved / Extension (3 bits)</b>: 對齊至位元組邊界的保留位元（補零）。</description></item>
+/// </list>
+/// 標準取樣率包含 2 位元組 (16-bit) 標頭，非標準取樣率則為 5 位元組 (40-bit) 標頭。
+/// </para>
+/// </summary>
 public sealed class AacCodecConfiguration
 {
     private readonly byte[] _audioSpecificConfig;
 
+    /// <summary>
+    /// 使用指定的取樣率與聲道配置初始化 AAC-LC <see cref="AacCodecConfiguration"/> 類別的新實例。
+    /// </summary>
+    /// <param name="sampleRate">音訊取樣率 (Hz)。</param>
+    /// <param name="channelConfiguration">聲道配置數 (1~7)。</param>
+    public AacCodecConfiguration(int sampleRate, int channelConfiguration)
+        : this(AacConfigParser.Encode(sampleRate, channelConfiguration, 2), sampleRate, channelConfiguration)
+    {
+    }
+
+    /// <summary>
+    /// 使用既有的 AudioSpecificConfig 二進位標頭、取樣率與聲道配置初始化 <see cref="AacCodecConfiguration"/> 類別的新實例。
+    /// </summary>
+    /// <param name="audioSpecificConfig">MPEG-4 AudioSpecificConfig 二進位標頭。</param>
+    /// <param name="sampleRate">宣告的取樣率 (Hz)。</param>
+    /// <param name="channelConfiguration">宣告的聲道配置數 (1~7)。</param>
     public AacCodecConfiguration(byte[] audioSpecificConfig, int sampleRate, int channelConfiguration)
     {
         if (audioSpecificConfig == null)
@@ -258,11 +287,46 @@ public sealed class AacCodecConfiguration
         AudioObjectType = parsed.AudioObjectType;
     }
 
+    /// <summary>
+    /// 使用取樣率、聲道配置與既有的 AudioSpecificConfig 二進位標頭初始化 <see cref="AacCodecConfiguration"/> 類別的新實例。
+    /// </summary>
+    /// <param name="sampleRate">宣告的取樣率 (Hz)。</param>
+    /// <param name="channelConfiguration">宣告的聲道配置數 (1~7)。</param>
+    /// <param name="audioSpecificConfig">MPEG-4 AudioSpecificConfig 二進位標頭。</param>
     public AacCodecConfiguration(int sampleRate, int channelConfiguration, byte[] audioSpecificConfig)
         : this(audioSpecificConfig, sampleRate, channelConfiguration)
     {
     }
 
+    /// <summary>
+    /// 依指定的取樣率、聲道配置與音訊物件類型動態建立 <see cref="AacCodecConfiguration"/> 實例，並自動編碼 AudioSpecificConfig 標頭。
+    /// </summary>
+    /// <param name="sampleRate">音訊取樣率 (Hz)。</param>
+    /// <param name="channelConfiguration">聲道配置數 (1~7)。</param>
+    /// <param name="audioObjectType">音訊物件類型（預設為 2 即 AAC-LC）。</param>
+    /// <returns>對應的 <see cref="AacCodecConfiguration"/> 實例。</returns>
+    public static AacCodecConfiguration Create(int sampleRate, int channelConfiguration, int audioObjectType = 2)
+    {
+        var asc = AacConfigParser.Encode(sampleRate, channelConfiguration, audioObjectType);
+        return new AacCodecConfiguration(asc, sampleRate, channelConfiguration);
+    }
+
+    /// <summary>
+    /// 依指定的取樣率與聲道配置動態建立 AAC-LC (Audio Object Type = 2) 的 <see cref="AacCodecConfiguration"/> 實例。
+    /// </summary>
+    /// <param name="sampleRate">音訊取樣率 (Hz)。</param>
+    /// <param name="channelConfiguration">聲道配置數 (1~7)。</param>
+    /// <returns>對應的 AAC-LC <see cref="AacCodecConfiguration"/> 實例。</returns>
+    public static AacCodecConfiguration CreateAacLc(int sampleRate, int channelConfiguration)
+    {
+        return Create(sampleRate, channelConfiguration, 2);
+    }
+
+    /// <summary>
+    /// 從 MPEG-4 AudioSpecificConfig 二進位標頭解析並建立 <see cref="AacCodecConfiguration"/> 實例。
+    /// </summary>
+    /// <param name="audioSpecificConfig">MPEG-4 AudioSpecificConfig 位元組陣列。</param>
+    /// <returns>解析後的 <see cref="AacCodecConfiguration"/> 實例。</returns>
     public static AacCodecConfiguration FromAudioSpecificConfig(byte[] audioSpecificConfig)
     {
         if (audioSpecificConfig == null)
@@ -274,11 +338,22 @@ public sealed class AacCodecConfiguration
         return new AacCodecConfiguration(audioSpecificConfig, parsed.SampleRate, parsed.ChannelConfiguration);
     }
 
+    /// <summary>取得 MPEG-4 AudioSpecificConfig 二進位標頭的防禦性複製。</summary>
     public byte[] AudioSpecificConfig => Copy(_audioSpecificConfig);
+
+    /// <summary>取得音訊取樣率 (Hz)。</summary>
     public int SampleRate { get; }
+
+    /// <summary>取得音訊取樣率 (Hz) 別名。</summary>
     public int SampleRateHz => SampleRate;
+
+    /// <summary>取得 MPEG-4 聲道配置數 (1~7)。</summary>
     public int ChannelConfiguration { get; }
+
+    /// <summary>取得聲道數別名。</summary>
     public int Channels => ChannelConfiguration;
+
+    /// <summary>取得 MPEG-4 音訊物件類型 (Audio Object Type, AOT)。</summary>
     public int AudioObjectType { get; }
 
     internal byte[] AudioSpecificConfigBytes => _audioSpecificConfig;

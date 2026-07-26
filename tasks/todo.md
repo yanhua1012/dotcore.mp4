@@ -728,3 +728,78 @@
 - Archived to `openspec/changes/archive/2026-07-26-add-mp4-async-io` and `openspec/changes/archive/2026-07-26-reduce-mp4-byte-copies`; both retained `.openspec.yaml`.
 - Post-archive `openspec list --json` reports zero active changes. `openspec validate --all --strict --json --no-interactive` passed 3/3 main specs with informational long-text notices only.
 - Archived task counts remain 74/74 and 51/51 with zero unchecked. `git diff --check` and `git diff --cached --check` both passed.
+
+# 2026-07-26 Synchronize README after async I/O and byte-copy archival
+
+## Acceptance criteria
+
+- [x] README accurately describes the current async Reader/Writer API, Console I/O mode, lifecycle, cancellation, and partial-output semantics.
+- [x] README describes internal byte-copy reductions and benchmark evidence without changing or overstating public ownership/performance contracts.
+- [x] Marker-delimited C# snippets compile against the current public API.
+- [x] Relevant tests, OpenSpec strict validation, and diff hygiene pass.
+
+## Checkpoints
+
+- [x] A — compare README with archived specs, current public APIs, Console behavior, benchmark evidence, and repository lessons.
+- [x] B — apply the smallest accurate README update and preserve existing compatibility guidance.
+- [x] C — run README snippet/API tests plus appropriate build/spec verification.
+- [x] D — review claims, diff scope, and record observed results.
+
+## Risk and rollback
+
+- Risk level: low; documentation-only behavior description plus this audit record.
+- Affected components: `README.md`, `tests/DotCore.Mp4.Tests/ReadmeSnippetTests.cs`, and `tasks/todo.md`.
+- Rollback: revert only the README synchronization, its snippet-marker assertion, and this audit section; no runtime/API/data changes.
+
+## Working notes
+
+- README already contains the initial async and copy-reduction documentation from earlier slices, so this update targets drift introduced by the final Writer operation-gate remediation and controlled-environment benchmark finding.
+- The sync path is not literally unchanged: final remediation added an atomic operation gate and sync-finalize failure handling while preserving output bytes and public signatures.
+- Shared devcontainer timing variance cannot prove the 10% throughput gate; README must require controlled/dedicated evidence and avoid the stale claim that regression is impossible.
+
+## Results
+
+- README now covers async factories across all three layouts, Reader snapshot cancellation/position/ownership, atomic Writer overlap and active-dispose rejection, terminal partial-output handling, Console I/O mode, and the internal-only byte-copy ownership contract.
+- Corrected stale performance language: fixed-output/allocation parity is not throughput proof; the 10% gate requires a controlled host. Copy-reduction percentages are explicitly limited to required/allocation-gated scenarios, and async file-backed coverage includes progressive, faststart, and fragmented operations.
+- Added benchmark artifact privacy guidance because commands and absolute result paths are serialized; gitignored artifacts must be reviewed before sharing.
+- Added the `sync-round-trip` marker and made the snippet release its output before reopening the same path. `ReadmeSnippetTests` now requires and compiles exactly the sync, async Reader, and async Writer snippets.
+- Initial targeted test was blocked before compilation by a stale Windows NuGet fallback path. `dotnet restore DotCore.Mp4.sln /p:RestoreFallbackFolders= /p:RestorePackagesPath=/root/.nuget/packages` recovered the checkout.
+- Verification: targeted unit/API/Writer tests 33/33 passed, final README snippet test 1/1 passed, Console contract tests 17/17 passed, async round-trip/byte-identical integration tests 12/12 passed; all had 0 failed and 0 skipped.
+- Benchmark `self-test` passed; compatibility and fixed-output `baseline` matched. OpenSpec strict validation passed 3/3 main specs with informational long-text notices only. `git diff --check` and staged diff check passed.
+- Independent final diff review found and prompted correction of two warnings (Windows file sharing in the sync snippet and allocation percentage scope); no CRITICAL findings remain.
+
+# 2026-07-26 Initialize repository AGENTS.md in zh-TW
+
+## Acceptance criteria
+
+- [x] Root `AGENTS.md` uses zh-TW and accurately records repo layout, commands, invariants, OpenSpec lifecycle, verification, and dirty-worktree safety.
+- [x] Guidance is concise, repository-specific, and does not overwrite existing user changes or the active OpenSpec change.
+- [x] All documented commands and project facts map to current repository evidence.
+- [x] Markdown/diff hygiene and an independent final review pass.
+
+## Checkpoints
+
+- [x] A — read the current Codex manual `/init` and `AGENTS.md` guidance, repository memory, README, projects, OpenSpec config/status, lessons, and Git state.
+- [x] B — independently inventory project/build/test conventions and OpenSpec/Git lifecycle constraints.
+- [x] C — create the minimal root `AGENTS.md` and preserve the current dirty worktree.
+- [x] D — verify paths, commands, scope, formatting, and final review; record results.
+
+## Risk and rollback
+
+- Risk level: low; repository guidance and this audit record only.
+- Affected components: `AGENTS.md` and `tasks/todo.md`.
+- Rollback: remove only the new `AGENTS.md` and this initialization audit section; do not touch existing README/test/OpenSpec work.
+
+## Working notes
+
+- Codex manual defines `/init` as scaffolding a current-directory `AGENTS.md`; good guidance covers layout, run/build/test commands, conventions, constraints, and verifiable completion.
+- Existing modified README/test/todo files and untracked `openspec/changes/add-aac-config-factory/` are user-owned and must remain intact.
+- At discovery, active change artifact completion was 4/4 while implementation was 0/11 tasks; concurrent external work later advanced its checkboxes independently. Guidance must prevent conflating artifact and implementation states and must not interfere with that work.
+
+## Results
+
+- Added a 168-line, 10,251-byte root `AGENTS.md`, below Codex's default project-document limit. It records zh-TW output, repo layout, production/public-contract invariants, test-first workflow, OpenSpec propose/apply/verify/sync/archive boundaries, machine-count rules, `/mnt/c` restore recovery, canonical .NET/media/benchmark commands, dirty-worktree safety, and Definition of Done.
+- Verified current tools: .NET SDK 10.0.203, OpenSpec 1.6.0, ffprobe/ffmpeg 6.1.1. `openspec instructions apply --change add-aac-config-factory --json` confirmed the documented command and context-file shape.
+- `openspec validate --all --strict --json --no-interactive` passed 4/4 current items with informational long-text notices only. `git diff --check` and `git diff --cached --check` passed.
+- Independent inventory and final review corrected deterministic Release benchmark setup, zero-match task counting, approved TFM/dependency exceptions, subagent file ownership, and a reproducible Console command. Final review: 0 CRITICAL, 0 WARNING.
+- No product build/test was started for `/init`: concurrent external work changed `add-aac-config-factory` from 0/11 to 11/11 and modified source/tests while this documentation task was running. Those edits were preserved and were not reviewed or claimed by this task.
