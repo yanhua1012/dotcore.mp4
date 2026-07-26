@@ -1,5 +1,13 @@
 # Lessons
 
+## 2026-07-26 — ripgrep 的 `-h` 是 help，不是 suppress filename
+
+- 分類：missing verification。
+- Failure mode：以 `rg -h '<pattern>' | wc -l` 計算 OpenSpec requirements/scenarios/tasks，誤把 ripgrep help 的 135 行當成 artifact count。
+- Detection signal：requirements、scenarios、unchecked tasks、checked tasks 四個不相關計數都異常地同為 135，且與檔案規模明顯不符。
+- Prevention rule：ripgrep 機器計數一律使用完整的 `--no-filename`，不得沿用其他 grep 工具的 `-h` 短參數習慣。
+- Tripwire：回報計數前同時列出逐檔 `rg -c` 與 `rg --no-filename ... | wc -l` 總數，兩者加總必須一致。
+
 ## 2026-07-26 — Rejection-state fixture 必須使用可 round-trip 的時間軸
 
 - 分類：incorrect assumption about repo behavior。

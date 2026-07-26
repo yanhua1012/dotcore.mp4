@@ -1,3 +1,50 @@
+# 2026-07-26 Propose `add-mp4-async-io`
+
+## Acceptance criteria
+
+- [x] Proposal keeps every existing synchronous API and adds true Stream-based async I/O without `Task.Run` or sync-over-async.
+- [x] Reader and Writer async contracts define cancellation, overlap, partial-output failure, stream ownership, and byte-identical output behavior.
+- [x] Design and delta specs explicitly cover the Console sample demo, unit/integration tests, reproducible async benchmarks, and `README.md`.
+- [x] Tasks are tests-first, independently verifiable, and preserve dependency-free `netstandard2.0`.
+- [x] OpenSpec reports all apply-required artifacts complete and strict validation passes.
+
+## Checkpoints
+
+- [x] A — load proposal guidance, repository lessons, existing async exploration, and current OpenSpec state.
+- [x] B — create the change scaffold and author proposal, design, and delta specs.
+- [x] C — author implementation tasks and complete API, correctness, and performance reviews.
+- [x] D — run strict validation, machine counts, and diff checks; record apply readiness.
+
+## Risk and rollback
+
+- Risk level: low for this planning-only turn; future implementation risk is medium.
+- Affected components: `Mp4Reader`, `Mp4Writer`, internal Stream I/O helpers, Console sample, unit/integration tests, benchmarks, and `README.md`.
+- Compatibility: existing constructors, synchronous methods and aliases, events, MP4 bytes, exceptions, stream ownership, and three layouts remain supported.
+- Rollback: remove `openspec/changes/add-mp4-async-io` and this planning section; this turn changes no production behavior.
+
+## Dependencies and environment
+
+- Production remains dependency-free `netstandard2.0`; public async APIs use compatible `Task` and `CancellationToken` contracts.
+- Tests, benchmarks, and Console sample may target .NET 10.
+- Async performance claims require a truly asynchronous delayed Stream plus realistic file-backed coverage; `MemoryStream` alone is insufficient.
+
+## Working notes
+
+- Reader async scope is constructor-time snapshot creation; post-construction enumeration remains memory-only and synchronous.
+- Writer async scope must reach payload writes, fragment startup/flush, faststart relocation, and finalization.
+- Same-writer overlap is rejected deterministically; cancellation or I/O failure after output begins must not permit unsafe reuse.
+
+## Results
+
+- Created `add-mp4-async-io` with proposal, design, three delta specs, and a tests-first implementation checklist.
+- Public scope is six canonical additive async members: Reader `CreateAsync`; two Writer `CreateAsync` overloads; `WriteVideoNalUnitAsync`; `WriteAudioSampleAsync`; `FinalizeFileAsync`. Existing constructors, synchronous methods/aliases, output bytes, target framework, and packages remain compatible.
+- Console planning adds optional fourth `[sync|async]` argument with default sync; unit/integration planning covers async-only Streams, cancellation, overlap, terminal fault, actual `FileOptions.Asynchronous` files, six codec/layout combinations, and FFmpeg interoperability.
+- Benchmark planning separates immediate-completion overhead, real file I/O, and Reader plus Writer concurrency 1/32/128; measured Tasks must be awaited inside the timed region, and results include synchronous completion ratio without logging payloads or credentials.
+- Independent API and performance reviews found two semantic criticals and five benchmark/documentation warnings; artifacts were revised to separate factory partial-header failure from returned-instance Faulted state, define the output-risk boundary including SetLength/Seek, set state/cancellation precedence and late-cancel commit behavior, compile README snippets, and constrain evidence privacy.
+- Machine counts: 4/4 artifact kinds complete, 3 delta spec files, 8 requirements, 34 scenarios, and 74 unchecked implementation tasks.
+- `openspec validate add-mp4-async-io --strict --json --no-interactive` passed 1/1 with no issues; `git diff --check` and trailing-whitespace checks passed.
+- No product build/test was run because this turn created planning artifacts only; implementation verification commands are explicitly tracked in tasks 7–10.
+
 # 2026-07-26 Propose `reduce-mp4-byte-copies`
 
 ## Acceptance criteria
