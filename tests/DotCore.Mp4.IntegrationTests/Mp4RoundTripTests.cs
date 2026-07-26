@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using DotCore.Mp4;
 using Xunit;
@@ -310,10 +311,14 @@ public sealed class Mp4RoundTripTests
 
     private static string RequireTool(string name)
     {
+        var executableName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) &&
+            !name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            ? name + ".exe"
+            : name;
         var path = Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator)
-            .Select(directory => Path.Combine(directory, name))
+            .Select(directory => Path.Combine(directory, executableName))
             .FirstOrDefault(File.Exists);
-        if (path == null) throw SkipException.ForSkip("Prerequisite executable is missing from PATH: " + name);
+        if (path == null) throw SkipException.ForSkip("Prerequisite executable is missing from PATH: " + executableName);
         return path;
     }
 

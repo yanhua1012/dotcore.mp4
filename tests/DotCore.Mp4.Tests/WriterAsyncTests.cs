@@ -1,10 +1,6 @@
-using System;
-using System.IO;
-using System.Linq;
+﻿using DotCore.Mp4;
+using DotCore.Mp4.Tests;
 using System.Security.Cryptography;
-using System.Threading;
-using System.Threading.Tasks;
-using DotCore.Mp4;
 using Xunit;
 
 /// <summary>
