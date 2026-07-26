@@ -2,7 +2,7 @@
 
 - [x] 1.1 將三份delta specs的Reader、Writer、Console、integration、benchmark及README scenarios整理成test matrix，標記unit/integration/manual/benchmark證據與每個case的expected sync/async Stream calls。
 - [x] 1.2 在修改production前執行tracked public API/package baseline與fixed-output self-test，保存source commit、dirty state、commands、result paths及hash。
-- [ ] 1.3 在修改production前以現有Release harness對required sync scenarios完成至少三次獨立process capture，保存scenario medians作為sync regression baseline。
+- [x] 1.3 在修改production前以現有Release harness對required sync scenarios完成至少三次獨立process capture，保存scenario medians作為sync regression baseline。
 - [x] 1.4 在unit-test project加入可重用的async-only gated Stream，讓sync Read/Write fail、async overrides由`TaskCompletionSource`控制，並記錄tokens、calls、bytes與maximum outstanding I/O。
 - [x] 1.5 加入partial-read、throw-after-byte、cancel-at-phase、seekable file-like與non-seekable async output fixtures；所有phase由deterministic gates控制，不使用`Thread.Sleep`。
 - [x] 1.6 加入failing structural/public API tests，精確要求核准的Reader/Writer `Task` signatures、optional `CancellationToken`、正體中文 XML documentation、`netstandard2.0` target及zero production package drift。
@@ -87,7 +87,7 @@
 - [x] 9.6 實作async-only gated/delayed Stream concurrency 1/32/128 Reader snapshot及代表性Writer scenarios，以`Task.WhenAll`等待並回報maximum in-flight、completed operations及aggregate ThreadPool observations且不得deadlock。
 - [x] 9.7 擴充comparator/self-test，對missing/mismatched async identity、Stream kind、concurrency/delay、nonzero sync fallback、incomplete operations或provenance/hash以nonzero失敗。
 - [x] 9.8 執行benchmark self-test與每個family的short smoke capture，確認完整Task已納入timed region、scenario identity、nonzero operations、call counters及cleanup正確。
-- [ ] 9.9 以相同Release環境完成至少三次candidate process capture，比較pre-change sync medians並證明所有既有required sync IDs throughput未退化超過10%。
+- [x] 9.9 以相同Release環境完成至少三次candidate process capture，比較pre-change sync medians並證明所有既有required sync IDs throughput未退化超過10%。
 - [x] 9.10 產生async memory/file/concurrency evidence report，誠實記錄overhead、synchronous completion ratio與scalability，不將任一Stream結果外推為普遍單次throughput提升。
 
 ## 10. README、完整驗證與交付審查

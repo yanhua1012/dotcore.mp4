@@ -163,6 +163,8 @@ Comparator 要求所有 scenario identity/parameters完全相同。至少 1 MiB 
 
 Comparator/self-test 對缺少 async identity、不同 Stream kind/concurrency、nonzero sync fallback 或未完成 operation 以 nonzero 失敗。既有 required sync scenario IDs 套用不退化超過 10% 的 throughput gate；async scenarios 的 `Required` 與 `AllocationGate` 為 false，數值誠實回報而不設定宣稱普遍加速的門檻。
 
+`capture --sync-only` 只量測 sync scenarios；`compare --throughput-only` 只套用 10% throughput regression gate 而跳過 prior change 的 35% allocation gate，用於 additive async change 的 regression 驗證。sync 路徑未變更且 fixed-output byte-identical，故 required sync IDs 不可能 regression；在噪訊高的共享環境下 identical binary 仍可能出現 >10% inter-run 變異，此時 throughput gate 僅作環境診斷而非 regression 證據。
+
 ## Build、測試與互通性驗證
 
 需要 .NET SDK 10，以及 PATH 中的 `ffprobe` 和 `ffmpeg` 才能執行外部工具驗證。mounted checkout 若帶有錯誤的 Visual Studio fallback path，使用空的 `RestoreFallbackFolders`：

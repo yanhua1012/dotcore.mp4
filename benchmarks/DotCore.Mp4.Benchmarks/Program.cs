@@ -80,7 +80,11 @@ internal static class Program
         var output = RequiredOption(args, "--output");
         var operations = int.TryParse(Option(args, "--operations"), out var parsed) ? parsed : 3;
         if (operations <= 0) throw new ArgumentOutOfRangeException("--operations", "Operations must be positive.");
-        var run = BenchmarkCapture.Capture(FixedFixtureMatrix.Scenarios, operations, Environment.CommandLine);
+        var syncOnly = args.Contains("--sync-only", StringComparer.Ordinal);
+        var scenarios = syncOnly
+            ? FixedFixtureMatrix.Scenarios.Where(value => value.IoMode == IoMode.Sync).ToArray()
+            : FixedFixtureMatrix.Scenarios;
+        var run = BenchmarkCapture.Capture(scenarios, operations, Environment.CommandLine);
         BenchmarkRunProvenance.Seal(run, output);
         WriteJson(output, run, BenchmarkJsonContext.Default.BenchmarkRun);
         Console.WriteLine("Captured " + run.Results.Count + " scenarios to " + output);
@@ -96,9 +100,10 @@ internal static class Program
             throw new ArgumentException("compare requires one or more --baseline and --candidate paths.");
         }
 
+        var throughputOnly = args.Contains("--throughput-only", StringComparer.Ordinal);
         var baselines = baselinePaths.Select(path => ReadJson(path, BenchmarkJsonContext.Default.BenchmarkRun)).ToArray();
         var candidates = candidatePaths.Select(path => ReadJson(path, BenchmarkJsonContext.Default.BenchmarkRun)).ToArray();
-        var report = BenchmarkComparator.Compare(baselines, candidates);
+        var report = BenchmarkComparator.Compare(baselines, candidates, throughputOnly: throughputOnly);
         var reportPath = Option(args, "--output");
         if (reportPath != null) WriteJson(reportPath, report, BenchmarkJsonContext.Default.ComparisonReport);
         foreach (var error in report.Errors) Console.Error.WriteLine(error);
@@ -290,8 +295,8 @@ internal static class Program
     {
         Console.Error.WriteLine("Usage:");
         Console.Error.WriteLine("  baseline [--directory <path>] [--update]");
-        Console.Error.WriteLine("  capture --output <path> [--operations <positive-int>]");
-        Console.Error.WriteLine("  compare --baseline <path>... --candidate <path>... [--output <path>]");
+        Console.Error.WriteLine("  capture --output <path> [--operations <positive-int>] [--sync-only]");
+        Console.Error.WriteLine("  compare --baseline <path>... --candidate <path>... [--output <path>] [--throughput-only]");
         Console.Error.WriteLine("  self-test");
         return 2;
     }
@@ -491,7 +496,8 @@ internal static class BenchmarkComparator
     public static ComparisonReport Compare(
         IReadOnlyList<BenchmarkRun> baselineRuns,
         IReadOnlyList<BenchmarkRun> candidateRuns,
-        int minimumRuns = 3)
+        int minimumRuns = 3,
+        bool throughputOnly = false)
     {
         var report = new ComparisonReport
         {
@@ -546,7 +552,7 @@ internal static class BenchmarkComparator
                 CandidateOperationsPerSecond = candidateThroughput,
                 ThroughputChangePercent = baselineThroughput == 0 ? 0 : (candidateThroughput - baselineThroughput) / baselineThroughput * 100
             };
-            if (item.AllocationGate && candidateAllocation > baselineAllocation * 0.65)
+            if (item.AllocationGate && !throughputOnly && candidateAllocation > baselineAllocation * 0.65)
             {
                 item.Errors.Add("Allocated bytes did not decrease by at least 35%.");
             }
