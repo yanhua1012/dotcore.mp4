@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using DotCore.Mp4;
 
 internal static class Program
@@ -15,14 +17,15 @@ internal static class Program
     private static readonly byte[] AacAccessUnit = Convert.FromBase64String(
         "3gIATGF2YzYwLjMxLjEwMgACcKVbYKhtUQtCff+nXj2mb315k8ezckh5ySLknwgTJUyXR2kRhUyUYViWWp0tTtWnKrSTm/6pLAciVZjPxo6jV3a3GqbbJtqmcEQRTWprTJTJTJQMDAwMDAwMDAwMDAwMDAxs2DIpZZYooooooooooooooouA");
 
-    private static int Main(string[] args)
+    private static async Task<int> Main(string[] args)
     {
-        if (args.Length > 3 ||
+        if (args.Length > 4 ||
             !TryParseMode(args.Length > 1 ? args[1] : null, out var mode, out var modeName) ||
-            !TryParseCodec(args.Length > 2 ? args[2] : null, out var codec, out var codecName))
+            !TryParseCodec(args.Length > 2 ? args[2] : null, out var codec, out var codecName) ||
+            !TryParseIoMode(args.Length > 3 ? args[3] : null, out var useAsync, out var ioName))
         {
             Console.Error.WriteLine(
-                "Usage: DotCore.Mp4.Console <output-path> [progressive|faststart|fragmented] [h264|h265]");
+                "Usage: DotCore.Mp4.Console <output-path> [progressive|faststart|fragmented] [h264|h265] [sync|async]");
             return 2;
         }
 
@@ -35,81 +38,182 @@ internal static class Program
         var sampleDuration = TimeSpan.FromMilliseconds(40);
         var audioDuration = TimeSpan.FromTicks((long)Math.Round(TimeSpan.TicksPerSecond * 1024.0 / audioConfiguration.SampleRate));
 
-        using (var stream = File.Create(outputPath))
-        using (var writer = new Mp4Writer(stream, new Mp4WriterOptions { Mode = mode }))
+        if (useAsync)
         {
-            writer.SetVideoCodecConfiguration(fixture.Configuration);
-            writer.SetAudioCodecConfiguration(audioConfiguration);
-            var videoIndex = 0;
-            var audioIndex = 0;
-            while (videoIndex < fixture.Frames.Count || audioIndex < 4)
-            {
-                var videoTimestamp = TimeSpan.FromTicks(sampleDuration.Ticks * videoIndex);
-                var audioTimestamp = TimeSpan.FromTicks(audioDuration.Ticks * audioIndex);
-                if (videoIndex < fixture.Frames.Count && (audioIndex >= 4 || videoTimestamp <= audioTimestamp))
-                {
-                    writer.WriteVideoNalUnit(new EncodedVideoNalUnit(
-                        fixture.Frames[videoIndex],
-                        videoTimestamp,
-                        videoTimestamp,
-                        sampleDuration,
-                        fixture.KeyFrames[videoIndex]));
-                    videoIndex++;
-                }
-                else
-                {
-                    writer.WriteAudioSample(new EncodedAudioSample(
-                        AacAccessUnit,
-                        audioTimestamp,
-                        audioTimestamp,
-                        audioDuration));
-                    audioIndex++;
-                }
-            }
-            writer.FinalizeFile();
+            await WriteAsync(outputPath, mode, fixture, audioConfiguration, sampleDuration, audioDuration);
+        }
+        else
+        {
+            WriteSync(outputPath, mode, fixture, audioConfiguration, sampleDuration, audioDuration);
         }
 
         Console.WriteLine("Mode: " + modeName);
         Console.WriteLine("Codec: " + codecName);
+        Console.WriteLine("I/O: " + ioName);
         Console.WriteLine("MP4: " + outputPath);
 
         using (var stream = File.OpenRead(outputPath))
-        using (var reader = new Mp4Reader(stream))
+        using (var reader = useAsync
+            ? await Mp4Reader.CreateAsync(stream)
+            : new Mp4Reader(stream))
         {
-            var parsedVideo = reader.VideoConfiguration ??
-                              throw new Mp4FormatException("The generated MP4 does not contain a parsed video configuration.");
-            var parsedAudio = reader.AudioConfiguration ??
-                              throw new Mp4FormatException("The generated MP4 does not contain a parsed AAC configuration.");
-            if (parsedVideo.Codec == VideoCodec.H265)
-            {
-                Console.WriteLine("Parsed H.265 VPS: " + Hex(parsedVideo.Vps!));
-                Console.WriteLine("Parsed H.265 SPS: " + Hex(parsedVideo.Sps));
-                Console.WriteLine("Parsed H.265 PPS: " + Hex(parsedVideo.Pps));
-            }
-            else
-            {
-                Console.WriteLine("Parsed H.264 SPS: " + Hex(parsedVideo.Sps));
-                Console.WriteLine("Parsed H.264 PPS: " + Hex(parsedVideo.Pps));
-            }
-            Console.WriteLine("Parsed AAC: objectType=" + parsedAudio.AudioObjectType +
-                              " sampleRate=" + parsedAudio.SampleRate +
-                              " channels=" + parsedAudio.ChannelConfiguration +
-                              " ASC=" + Hex(parsedAudio.AudioSpecificConfig));
-            reader.VideoNalUnitRead += (_, eventArgs) => Console.WriteLine(
-                "Video NAL: size=" + eventArgs.Data.Length +
-                " pts=" + eventArgs.PresentationTimestamp +
-                " dts=" + eventArgs.DecodeTimestamp +
-                " duration=" + eventArgs.Duration +
-                " key=" + eventArgs.IsKeyFrame);
-            reader.AacSampleRead += (_, eventArgs) => Console.WriteLine(
-                "AAC sample: size=" + eventArgs.Data.Length +
-                " pts=" + eventArgs.PresentationTimestamp +
-                " dts=" + eventArgs.DecodeTimestamp +
-                " duration=" + eventArgs.Duration);
-            reader.Read();
+            PrintReader(reader);
         }
 
         return 0;
+    }
+
+    private static void WriteSync(
+        string outputPath,
+        Mp4WriteMode mode,
+        VideoFixture fixture,
+        AacCodecConfiguration audioConfiguration,
+        TimeSpan sampleDuration,
+        TimeSpan audioDuration)
+    {
+        using var stream = File.Create(outputPath);
+        using var writer = new Mp4Writer(stream, new Mp4WriterOptions { Mode = mode });
+        writer.SetVideoCodecConfiguration(fixture.Configuration);
+        writer.SetAudioCodecConfiguration(audioConfiguration);
+        SubmitSamplesSync(writer, fixture, sampleDuration, audioDuration);
+        writer.FinalizeFile();
+    }
+
+    private static async Task WriteAsync(
+        string outputPath,
+        Mp4WriteMode mode,
+        VideoFixture fixture,
+        AacCodecConfiguration audioConfiguration,
+        TimeSpan sampleDuration,
+        TimeSpan audioDuration)
+    {
+        var access = mode == Mp4WriteMode.FastStart ? FileAccess.ReadWrite : FileAccess.Write;
+        using var stream = new FileStream(outputPath, FileMode.Create, access, FileShare.Read, 1 << 16, FileOptions.Asynchronous);
+        using var writer = await Mp4Writer.CreateAsync(stream, new Mp4WriterOptions { Mode = mode });
+        writer.SetVideoCodecConfiguration(fixture.Configuration);
+        writer.SetAudioCodecConfiguration(audioConfiguration);
+        await SubmitSamplesAsync(writer, fixture, sampleDuration, audioDuration);
+        await writer.FinalizeFileAsync();
+    }
+
+    private static void SubmitSamplesSync(
+        Mp4Writer writer,
+        VideoFixture fixture,
+        TimeSpan sampleDuration,
+        TimeSpan audioDuration)
+    {
+        var videoIndex = 0;
+        var audioIndex = 0;
+        while (videoIndex < fixture.Frames.Count || audioIndex < 4)
+        {
+            var videoTimestamp = TimeSpan.FromTicks(sampleDuration.Ticks * videoIndex);
+            var audioTimestamp = TimeSpan.FromTicks(audioDuration.Ticks * audioIndex);
+            if (videoIndex < fixture.Frames.Count && (audioIndex >= 4 || videoTimestamp <= audioTimestamp))
+            {
+                writer.WriteVideoNalUnit(new EncodedVideoNalUnit(
+                    fixture.Frames[videoIndex],
+                    videoTimestamp,
+                    videoTimestamp,
+                    sampleDuration,
+                    fixture.KeyFrames[videoIndex]));
+                videoIndex++;
+            }
+            else
+            {
+                writer.WriteAudioSample(new EncodedAudioSample(
+                    AacAccessUnit,
+                    audioTimestamp,
+                    audioTimestamp,
+                    audioDuration));
+                audioIndex++;
+            }
+        }
+    }
+
+    private static async Task SubmitSamplesAsync(
+        Mp4Writer writer,
+        VideoFixture fixture,
+        TimeSpan sampleDuration,
+        TimeSpan audioDuration)
+    {
+        var videoIndex = 0;
+        var audioIndex = 0;
+        while (videoIndex < fixture.Frames.Count || audioIndex < 4)
+        {
+            var videoTimestamp = TimeSpan.FromTicks(sampleDuration.Ticks * videoIndex);
+            var audioTimestamp = TimeSpan.FromTicks(audioDuration.Ticks * audioIndex);
+            if (videoIndex < fixture.Frames.Count && (audioIndex >= 4 || videoTimestamp <= audioTimestamp))
+            {
+                await writer.WriteVideoNalUnitAsync(new EncodedVideoNalUnit(
+                    fixture.Frames[videoIndex],
+                    videoTimestamp,
+                    videoTimestamp,
+                    sampleDuration,
+                    fixture.KeyFrames[videoIndex]));
+                videoIndex++;
+            }
+            else
+            {
+                await writer.WriteAudioSampleAsync(new EncodedAudioSample(
+                    AacAccessUnit,
+                    audioTimestamp,
+                    audioTimestamp,
+                    audioDuration));
+                audioIndex++;
+            }
+        }
+    }
+
+    private static void PrintReader(Mp4Reader reader)
+    {
+        var parsedVideo = reader.VideoConfiguration ??
+                          throw new Mp4FormatException("The generated MP4 does not contain a parsed video configuration.");
+        var parsedAudio = reader.AudioConfiguration ??
+                          throw new Mp4FormatException("The generated MP4 does not contain a parsed AAC configuration.");
+        if (parsedVideo.Codec == VideoCodec.H265)
+        {
+            Console.WriteLine("Parsed H.265 VPS: " + Hex(parsedVideo.Vps!));
+            Console.WriteLine("Parsed H.265 SPS: " + Hex(parsedVideo.Sps));
+            Console.WriteLine("Parsed H.265 PPS: " + Hex(parsedVideo.Pps));
+        }
+        else
+        {
+            Console.WriteLine("Parsed H.264 SPS: " + Hex(parsedVideo.Sps));
+            Console.WriteLine("Parsed H.264 PPS: " + Hex(parsedVideo.Pps));
+        }
+        Console.WriteLine("Parsed AAC: objectType=" + parsedAudio.AudioObjectType +
+                          " sampleRate=" + parsedAudio.SampleRate +
+                          " channels=" + parsedAudio.ChannelConfiguration +
+                          " ASC=" + Hex(parsedAudio.AudioSpecificConfig));
+        reader.VideoNalUnitRead += (_, eventArgs) => Console.WriteLine(
+            "Video NAL: size=" + eventArgs.Data.Length +
+            " pts=" + eventArgs.PresentationTimestamp +
+            " dts=" + eventArgs.DecodeTimestamp +
+            " duration=" + eventArgs.Duration +
+            " key=" + eventArgs.IsKeyFrame);
+        reader.AacSampleRead += (_, eventArgs) => Console.WriteLine(
+            "AAC sample: size=" + eventArgs.Data.Length +
+            " pts=" + eventArgs.PresentationTimestamp +
+            " dts=" + eventArgs.DecodeTimestamp +
+            " duration=" + eventArgs.Duration);
+        reader.Read();
+    }
+
+    private static bool TryParseIoMode(string? value, out bool useAsync, out string ioName)
+    {
+        ioName = string.IsNullOrEmpty(value) ? "sync" : value.ToLowerInvariant();
+        switch (ioName)
+        {
+            case "sync":
+                useAsync = false;
+                return true;
+            case "async":
+                useAsync = true;
+                return true;
+            default:
+                useAsync = false;
+                return false;
+        }
     }
 
     private static bool TryParseMode(

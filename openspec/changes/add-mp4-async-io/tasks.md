@@ -71,11 +71,11 @@
 
 ## 8. Console async demonstration
 
-- [ ] 8.1 擴充Console smoke tests，先要求第四參數`async`的H.264/H.265 × 三種layout、`I/O: async`、3 video/4 AAC lines與public Reader round-trip，保存CLI尚未支援的red baseline。
-- [ ] 8.2 加入default/explicit `sync` compatibility與unknown I/O mode nonzero/no-success-output tests，assert既有stdout lines仍存在但允許additive `I/O: sync`，並維持既有arguments/defaults/file output與unknown mode/codec behavior。
-- [ ] 8.3 將Console entry point改為`async Task<int> Main`，新增optional `[sync|async]` parsing與`I/O:`輸出，省略時維持sync。
-- [ ] 8.4 實作async branch，await Writer factory、canonical sample/finalization methods與Reader factory；snapshot後仍以既有同步Reader delivery觸發events。
-- [ ] 8.5 執行Console smoke tests與代表性六種CLI commands，確認existing invocation未破壞且outputs可由Reader、`ffprobe`與`ffmpeg`驗證。
+- [x] 8.1 擴充Console smoke tests，先要求第四參數`async`的H.264/H.265 × 三種layout、`I/O: async`、3 video/4 AAC lines與public Reader round-trip，保存CLI尚未支援的red baseline。
+- [x] 8.2 加入default/explicit `sync` compatibility與unknown I/O mode nonzero/no-success-output tests，assert既有stdout lines仍存在但允許additive `I/O: sync`，並維持既有arguments/defaults/file output與unknown mode/codec behavior。
+- [x] 8.3 將Console entry point改為`async Task<int> Main`，新增optional `[sync|async]` parsing與`I/O:`輸出，省略時維持sync。
+- [x] 8.4 實作async branch，await Writer factory、canonical sample/finalization methods與Reader factory；snapshot後仍以既有同步Reader delivery觸發events。
+- [x] 8.5 執行Console smoke tests與代表性六種CLI commands，確認existing invocation未破壞且outputs可由Reader、`ffprobe`與`ffmpeg`驗證。
 
 ## 9. Async benchmark、scalability 與 comparator
 
