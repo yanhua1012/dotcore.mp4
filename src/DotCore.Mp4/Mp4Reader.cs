@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace DotCore.Mp4;
 
@@ -21,8 +23,8 @@ public sealed class Mp4Reader : IDisposable
     private readonly Stream _input;
     private readonly bool _leaveOpen;
     private readonly byte[] _data;
-    private readonly ParsedTrack? _videoTrack;
-    private readonly ParsedTrack? _audioTrack;
+    private ParsedTrack? _videoTrack;
+    private ParsedTrack? _audioTrack;
     private bool _disposed;
 
     public Mp4Reader(Stream input, bool leaveOpen = true)
@@ -36,6 +38,78 @@ public sealed class Mp4Reader : IDisposable
         _input = input;
         _leaveOpen = leaveOpen;
         _data = Snapshot(input);
+        InitializeFromSnapshot();
+    }
+
+    /// <summary>以非同步 snapshot 建立 <see cref="Mp4Reader"/>，使用 caller stream 的可取消 <see cref="Stream.ReadAsync(byte[], int, int, CancellationToken)"/> 讀取完整 MP4，再交由與同步 constructor 相同的同步 parser 解析。</summary>
+    /// <param name="input">可讀、可搜尋的 caller-owned 輸入 stream；factory 在成功前不會因 <paramref name="leaveOpen"/> 為 <c>false</c> 而關閉它。</param>
+    /// <param name="leaveOpen">reader 釋放時是否保持 <paramref name="input"/> 開啟。</param>
+    /// <param name="cancellationToken">可取消 snapshot 讀取的 token。</param>
+    /// <returns>與同步 constructor 具有相同 configuration、payload、timing 與 events 的 <see cref="Mp4Reader"/>。</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="input"/> 為 <c>null</c>。</exception>
+    /// <exception cref="InvalidOperationException"><paramref name="input"/> 不可讀或不可搜尋。</exception>
+    /// <exception cref="Mp4FormatException">輸入超過 256 MiB 上限、提前結束或不含受支援的 track。</exception>
+    /// <remarks>
+    /// factory 在 <c>finally</c> 嘗試恢復 <paramref name="input"/> 的原始 position；restore 失敗時依既有同步 <c>finally</c> 語意由 restore exception 取代先前 read/cancellation failure。Snapshot 完成後的 parsing、events 與列舉仍維持同步 memory-only 行為，不使用 <c>Task.Run</c>。
+    /// </remarks>
+    public static async Task<Mp4Reader> CreateAsync(
+        Stream input,
+        bool leaveOpen = true,
+        CancellationToken cancellationToken = default)
+    {
+        if (input == null) throw new ArgumentNullException(nameof(input));
+        if (!input.CanRead || !input.CanSeek)
+        {
+            throw new InvalidOperationException("MP4 input requires a readable, seekable stream.");
+        }
+
+        var originalPosition = input.Position;
+        byte[] data;
+        try
+        {
+            var length = input.Length;
+            if (length < 0 || length > MaximumInputBytes)
+            {
+                throw new Mp4FormatException(
+                    "The MP4 input length exceeds the managed reader limit of " +
+                    MaximumInputBytes + " bytes.");
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            input.Seek(0, SeekOrigin.Begin);
+            data = new byte[(int)length];
+            var offset = 0;
+            while (offset < data.Length)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var read = await input
+                    .ReadAsync(data, offset, data.Length - offset, cancellationToken)
+                    .ConfigureAwait(false);
+                if (read <= 0) throw new Mp4FormatException("The MP4 stream ended before its declared length was read.");
+                offset += read;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        finally
+        {
+            input.Seek(originalPosition, SeekOrigin.Begin);
+        }
+
+        var reader = new Mp4Reader(input, leaveOpen, data);
+        return reader;
+    }
+
+    private Mp4Reader(Stream input, bool leaveOpen, byte[] snapshot)
+    {
+        _input = input;
+        _leaveOpen = leaveOpen;
+        _data = snapshot;
+        InitializeFromSnapshot();
+    }
+
+    private void InitializeFromSnapshot()
+    {
         var tracks = ParseTracks(_data);
         foreach (var track in tracks)
         {
@@ -60,8 +134,8 @@ public sealed class Mp4Reader : IDisposable
         AudioConfiguration = _audioTrack?.AudioConfiguration;
     }
 
-    public VideoCodecConfiguration? VideoConfiguration { get; }
-    public AacCodecConfiguration? AudioConfiguration { get; }
+    public VideoCodecConfiguration? VideoConfiguration { get; private set; }
+    public AacCodecConfiguration? AudioConfiguration { get; private set; }
 
     public event EventHandler<VideoNalUnitReadEventArgs>? VideoNalUnitRead;
     public event EventHandler<AacSampleReadEventArgs>? AacSampleRead;

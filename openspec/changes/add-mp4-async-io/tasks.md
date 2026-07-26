@@ -3,19 +3,19 @@
 - [ ] 1.1 將三份delta specs的Reader、Writer、Console、integration、benchmark及README scenarios整理成test matrix，標記unit/integration/manual/benchmark證據與每個case的expected sync/async Stream calls。
 - [ ] 1.2 在修改production前執行tracked public API/package baseline與fixed-output self-test，保存source commit、dirty state、commands、result paths及hash。
 - [ ] 1.3 在修改production前以現有Release harness對required sync scenarios完成至少三次獨立process capture，保存scenario medians作為sync regression baseline。
-- [ ] 1.4 在unit-test project加入可重用的async-only gated Stream，讓sync Read/Write fail、async overrides由`TaskCompletionSource`控制，並記錄tokens、calls、bytes與maximum outstanding I/O。
-- [ ] 1.5 加入partial-read、throw-after-byte、cancel-at-phase、seekable file-like與non-seekable async output fixtures；所有phase由deterministic gates控制，不使用`Thread.Sleep`。
-- [ ] 1.6 加入failing structural/public API tests，精確要求核准的Reader/Writer `Task` signatures、optional `CancellationToken`、正體中文 XML documentation、`netstandard2.0` target及zero production package drift。
+- [x] 1.4 在unit-test project加入可重用的async-only gated Stream，讓sync Read/Write fail、async overrides由`TaskCompletionSource`控制，並記錄tokens、calls、bytes與maximum outstanding I/O。
+- [x] 1.5 加入partial-read、throw-after-byte、cancel-at-phase、seekable file-like與non-seekable async output fixtures；所有phase由deterministic gates控制，不使用`Thread.Sleep`。
+- [x] 1.6 加入failing structural/public API tests，精確要求核准的Reader/Writer `Task` signatures、optional `CancellationToken`、正體中文 XML documentation、`netstandard2.0` target及zero production package drift。
 - [ ] 1.7 執行API/fixture targeted tests，保存新public members尚未存在且async-only Streams尚未被production使用的red baseline。
 
 ## 2. Reader async snapshot slice
 
-- [ ] 2.1 加入failing Reader tests，涵蓋async-only delayed snapshot、nonzero position restore、partial reads、configuration/payload/event parity及post-construction zero Stream I/O。
-- [ ] 2.2 加入failing Reader cancellation/ownership tests，涵蓋pre-cancel、mid-read cancel、truncated/oversize/capability/parser failure、finally restore attempt、read/cancel加restore雙重失敗優先序、`leaveOpen:false` factory failure不關閉input及成功Dispose ownership。
-- [ ] 2.3 執行Reader targeted tests，確認failure只來自`CreateAsync`/async snapshot尚未實作並保存red evidence。
-- [ ] 2.4 重構constructor初始化，使sync/async paths共用capability/length guards、track parsing及instance initialization，且不改變既有sync exception與snapshot語意。
-- [ ] 2.5 實作具正體中文 XML documentation 的`Mp4Reader.CreateAsync`與byte-array `ReadAsync` loop，使用`ConfigureAwait(false)`、傳遞token並在`finally`恢復position。
-- [ ] 2.6 執行Reader async、ownership、resource-limit、malformed-input、event-order及repeatable-enumeration tests至green，並確認沒有新增async enumeration或`Task.Run`。
+- [x] 2.1 加入failing Reader tests，涵蓋async-only delayed snapshot、nonzero position restore、partial reads、configuration/payload/event parity及post-construction zero Stream I/O。
+- [x] 2.2 加入failing Reader cancellation/ownership tests，涵蓋pre-cancel、mid-read cancel、truncated/oversize/capability/parser failure、finally restore attempt、read/cancel加restore雙重失敗優先序、`leaveOpen:false` factory failure不關閉input及成功Dispose ownership。
+- [x] 2.3 執行Reader targeted tests，確認failure只來自`CreateAsync`/async snapshot尚未實作並保存red evidence。
+- [x] 2.4 重構constructor初始化，使sync/async paths共用capability/length guards、track parsing及instance initialization，且不改變既有sync exception與snapshot語意。
+- [x] 2.5 實作具正體中文 XML documentation 的`Mp4Reader.CreateAsync`與byte-array `ReadAsync` loop，使用`ConfigureAwait(false)`、傳遞token並在`finally`恢復position。
+- [x] 2.6 執行Reader async、ownership、resource-limit、malformed-input、event-order及repeatable-enumeration tests至green，並確認沒有新增async enumeration或`Task.Run`。
 
 ## 3. Writer operation state 與 async factory slice
 
