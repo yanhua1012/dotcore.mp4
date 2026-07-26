@@ -83,3 +83,53 @@ Reader MUST 以 checked arithmetic 與明確上限約束 top-level fragments、�
 #### Scenario: Reject non-monotonic fragment sequence
 - **WHEN** 後續 `mfhd.sequence_number` 重複或小於先前 sequence number
 - **THEN** reader MUST 拒絕 input，而不得重新排序 fragments
+
+### Requirement: Payload-efficient Reader delivery
+Reader SHALL 在維持 constructor-time完整 snapshot 的前提下，讓每個 emitted video NAL或AAC access unit在 caller明確要求 public defensive copy前，至多建立一份 payload-sized owned array。Reader MUST NOT在內部 payload slice已取得 ownership後，再經 public sample constructor建立第二份相同 payload；既有 public constructors、`Data` properties、events、可重複列舉與 Reader dispose後的sample lifetime MUST維持不變。
+
+#### Scenario: Deliver video without duplicate internal ownership copy
+- **WHEN** caller在沒有 event subscriber且不讀取 public `Data` property的情況下列舉含大型single-NAL與multi-NAL samples的任一supported layout
+- **THEN** Reader MUST為每個emitted NAL建立至多一份payload-sized owned array，且回傳的payload、timestamps、duration與keyframe state MUST與既有行為相同
+
+#### Scenario: Deliver AAC without duplicate internal ownership copy
+- **WHEN** caller在沒有 event subscriber且不讀取 public `Data` property的情況下列舉含大型AAC access units的任一supported layout
+- **THEN** Reader MUST為每個emitted access unit建立至多一份payload-sized owned array，且回傳的payload、timestamps與duration MUST與既有行為相同
+
+#### Scenario: Preserve defensive-copy isolation
+- **WHEN** caller修改public sample `Data`、video event args `Data`或AAC event args `Data`所回傳的array
+- **THEN** 修改MUST NOT影響Reader snapshot、其他event/sample instance、後續重複列舉結果或codec configuration
+
+#### Scenario: Preserve delivered sample lifetime
+- **WHEN** caller保留已emitted sample、dispose Reader並釋放input stream
+- **THEN** sample的public `Data` MUST仍回傳完整payload，且單一小sample MUST NOT僅因internal最佳化而持有完整MP4 snapshot
+
+#### Scenario: Preserve every public delivery entry point
+- **WHEN** caller分別使用`ReadVideoNalUnits()`、`EnumerateVideoNalUnits()`、`ReadAudioSamples()`、`EnumerateAacSamples()`、event-only `Read()`或`ReadAll()`
+- **THEN** aliases MUST使用相同optimized ownership path，且payload、callback count、跨軌order、timestamps與defensive-copy isolation MUST符合pre-change behavior
+
+#### Scenario: Validate transferred sample invariants
+- **WHEN** internal ownership-transfer path收到null/empty payload、negative PTS/DTS或non-positive duration
+- **THEN**它MUST和對應public constructor以相同exception type、`ParamName`及語意相等diagnostic拒絕，且只有payload copy步驟MUST不同
+
+### Requirement: Asynchronous Reader snapshot construction
+`Mp4Reader` SHALL 提供 dependency-free `netstandard2.0` 相容且具正體中文 XML documentation 的 `CreateAsync(Stream, bool, CancellationToken)` factory。Factory MUST 使用 caller Stream 的 cancellable `ReadAsync(byte[], int, int, CancellationToken)` 建立與同步 constructor相同的完整 snapshot，並 MUST 保持 readable/seekable capability、256 MiB input limit、codec discovery、error、event、defensive-copy、repeatable enumeration與stream ownership semantics。Snapshot完成後的 parsing及 `ReadVideoNalUnits()`、`ReadAudioSamples()`、`Read()`與aliases SHALL維持同步 memory-only operations，且 implementation MUST NOT以`Task.Run`或async enumeration包裝它們。
+
+#### Scenario: Create a Reader through true async snapshot I/O
+- **WHEN** caller以同步`Read`會失敗、`ReadAsync`會延遲完成的readable/seekable Stream呼叫`CreateAsync`
+- **THEN** returned task MUST在async reads完成前保持未完成，factory MUST只透過`ReadAsync`取得input bytes，並 MUST建立與同步constructor具有相同configuration、payload、timing及events的Reader
+
+#### Scenario: Restore a nonzero input position
+- **WHEN** caller從nonzero original position對有效MP4呼叫`CreateAsync`
+- **THEN** factory MUST從stream起點snapshot完整MP4，並在成功後將Stream恢復至原始position
+
+#### Scenario: Cancel before or during snapshot
+- **WHEN** token在第一個Stream access前已取消，或在delayed `ReadAsync` loop期間取消
+- **THEN** factory task MUST呈現cancellation、MUST在finally嘗試恢復original position、restore成功時MUST回到原位置、MUST NOT回傳partial Reader或關閉caller Stream，且pre-cancel MUST NOT讀取input
+
+#### Scenario: Preserve asynchronous factory failure semantics
+- **WHEN** async input宣告過大length、提前結束、缺少required capability、在read/position restore期間失敗或包含既有parser會拒絕的malformed MP4
+- **THEN** factory MUST維持對應同步path的resource guard與exception category、MUST NOT輸出partial samples，且在未成功回傳Reader前MUST NOT因`leaveOpen:false`關閉caller Stream；若read/cancellation與finally restore同時失敗，restore exception MUST依既有同步finally語意優先
+
+#### Scenario: Keep post-construction delivery synchronous and repeatable
+- **WHEN** caller成功await `CreateAsync`後重複使用任一既有Reader delivery entry point
+- **THEN** delivery MUST不再存取input Stream，並 MUST維持既有event order、repeatable enumeration、defensive-copy及Reader dispose後sample lifetime

@@ -687,3 +687,44 @@
 - Environmental finding: this shared WSL environment exhibits extreme inter-run throughput variance for IDENTICAL binaries (e.g. `reader.delivery.no-event.h265.large-video.single-nal` measured 10507 / 2861 / 14673 ops/s across three runs of the same binary; one scenario showed -63.9% between identical baseline/candidate). 9–12 of 37 required sync IDs exceed the 10% gate on identical binaries, so the 10% throughput gate is environmentally infeasible here, NOT evidence of a regression.
 - Strongest available non-throughput evidence that required sync IDs did not regress: (1) the fixed-output baseline is byte-identical (sync output bytes unchanged — verified by `baseline`); (2) the sync code path is unchanged — async additions are purely additive (6 new public members, separate internal async helpers); the only sync-method changes wrap the existing bodies in a non-blocking Idle/Active/Idle gate that is behavior-identical on the success path; (3) the approved compatibility baseline confirms all sync signatures are unchanged. Therefore a sync throughput regression is not possible from this change.
 - New harness capability: `capture --sync-only` and `compare --throughput-only` (default compare still applies both gates, so the existing reduce-mp4-byte-copies self-test/acceptance is unaffected). `self-test` still passes.
+
+# 2026-07-26 Archive `add-mp4-async-io` and `reduce-mp4-byte-copies`
+
+## Acceptance criteria
+
+- [x] Both changes have all planning artifacts and task checkboxes complete.
+- [x] Delta specs are assessed against main specs and the selected sync policy is applied.
+- [x] Both changes are archived under `openspec/changes/archive/2026-07-26-*`.
+- [x] Strict OpenSpec validation and `git diff --check` pass after archival.
+
+## Checkpoints
+
+- [x] A — load archive skill, repository lessons, status JSON, task counts, and target-path checks.
+- [x] B — compare both sets of delta specs with main specs and decide sync state.
+- [x] C — synchronize where selected and archive both changes.
+- [x] D — validate archive locations, active-change list, strict specs, task counts, and diff hygiene.
+
+## Risk and rollback
+
+- Risk level: low; the operation moves completed planning directories and may update main specification text.
+- Affected components: `openspec/changes`, `openspec/specs`, and this audit checklist only.
+- Rollback: move each dated archive directory back to its original active-change path and revert only the corresponding main-spec synchronization diff.
+
+## Dependencies and environment
+
+- OpenSpec CLI uses the nearest repo-local `openspec/` root; no standalone store was named.
+- Archive targets must remain absent until the final move.
+
+## Working notes
+
+- Both changes use the `spec-driven` schema and report all four artifacts as `done`.
+- Machine counts: `add-mp4-async-io` 74 checked / 0 unchecked; `reduce-mp4-byte-copies` 51 checked / 0 unchecked.
+- Both `2026-07-26` archive targets are currently free.
+
+## Results
+
+- User selected immediate sync before archival. Main specs received 15 added requirements and 62 scenarios: async I/O added 8/34; byte-copy reduction added 7/28. No requirements were modified, removed, or renamed.
+- All 15 synchronized requirement headings occur exactly once in their corresponding main specs; the second sync preserved every requirement from the first.
+- Archived to `openspec/changes/archive/2026-07-26-add-mp4-async-io` and `openspec/changes/archive/2026-07-26-reduce-mp4-byte-copies`; both retained `.openspec.yaml`.
+- Post-archive `openspec list --json` reports zero active changes. `openspec validate --all --strict --json --no-interactive` passed 3/3 main specs with informational long-text notices only.
+- Archived task counts remain 74/74 and 51/51 with zero unchecked. `git diff --check` and `git diff --cached --check` both passed.
