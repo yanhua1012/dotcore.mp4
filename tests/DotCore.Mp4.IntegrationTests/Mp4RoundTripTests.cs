@@ -9,9 +9,14 @@ using Xunit.Sdk;
 
 namespace DotCore.Mp4.IntegrationTests;
 
+/// <summary>
+/// MP4 寫入器與讀取器 Round-Trip 以及與 FFprobe / FFmpeg 互操作性測試套件。
+/// </summary>
 public sealed class Mp4RoundTripTests
 {
-    [Theory]
+    /// <summary>
+    /// 驗證 Writer/Reader 矩陣在不同編解碼器與寫入模式下能完整保留 Payload、時間標記與組態。
+    /// </summary>
     [InlineData(false, Mp4WriteMode.Progressive)]
     [InlineData(false, Mp4WriteMode.FastStart)]
     [InlineData(false, Mp4WriteMode.Fragmented)]

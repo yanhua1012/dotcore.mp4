@@ -6,11 +6,8 @@ using DotCore.Mp4;
 namespace DotCore.Mp4.Benchmarks;
 
 /// <summary>
-/// Executes async I/O benchmark scenarios: immediate-completion pre-sized memory,
-/// real file-backed streams (FileOptions.Asynchronous) and bounded-concurrency gated
-/// streams. The measured region awaits the operation Task before stopping the timer,
-/// records synchronous completion observed before the await, and reports observed
-/// (never synthesized) async/sync call counts, bytes moved and maximum outstanding I/O.
+/// 執行非同步 I/O 基準測試情境的核心執行器：包含立即完成記憶體串流、真實檔案串流 (FileOptions.Asynchronous)
+/// 與受控並行閘門串流。量測區域會在停止計時前 await 異步 Task，記錄觀測到的呼叫數、傳輸位元組與最大在途 I/O。
 /// </summary>
 internal sealed class Mp4AsyncBenchmarks
 {
@@ -20,10 +17,25 @@ internal sealed class Mp4AsyncBenchmarks
     private AsyncCountingStream? _stream;
     private string? _filePath;
 
+    /// <summary>
+
+    /// 取得或設定要執行的基準測試情境。
+
+    /// </summary>
     public BenchmarkScenario Scenario { get; set; } = null!;
 
+    /// <summary>
+
+    /// 取得非同步基準測試診斷數據。
+
+    /// </summary>
     public AsyncBenchmarkDiagnostics Diagnostics { get; private set; }
 
+    /// <summary>
+
+    /// 全域初始化準備工作。
+
+    /// </summary>
     public void GlobalSetup()
     {
         if (Scenario.Operation == BenchmarkOperation.AsyncReaderSnapshot)

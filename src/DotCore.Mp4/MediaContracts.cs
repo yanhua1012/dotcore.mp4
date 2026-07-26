@@ -2,21 +2,43 @@ using System;
 
 namespace DotCore.Mp4;
 
-/// <summary>Video codecs supported by the MP4 component.</summary>
+/// <summary>
+/// MP4 元件所支援的視訊編解碼器 (Video Codecs)。
+/// </summary>
 public enum VideoCodec
 {
+    /// <summary>
+    /// Advanced Video Coding (AVC / H.264) 編解碼器。
+    /// </summary>
     H264 = 1,
+
+    /// <summary>
+    /// High Efficiency Video Coding (HEVC / H.265) 編解碼器。
+    /// </summary>
     H265 = 2
 }
 
-/// <summary>Immutable codec configuration used by the video writer and reader.</summary>
+/// <summary>
+/// 表示由視訊寫入器 (Writer) 與讀取器 (Reader) 使用的不可變視訊編解碼器組態資訊。
+/// </summary>
 public sealed class VideoCodecConfiguration
 {
     private readonly byte[] _vps;
     private readonly byte[] _sps;
     private readonly byte[] _pps;
 
-    /// <summary>Creates an H.264 configuration containing SPS and PPS.</summary>
+    /// <summary>
+    /// 初始化包含 SPS 與 PPS 的 H.264 <see cref="VideoCodecConfiguration"/> 類別新實例。
+    /// </summary>
+    /// <param name="codec">視訊編解碼器型別（必須為 <see cref="VideoCodec.H264"/>）。</param>
+    /// <param name="sps">序列參數集 (Sequence Parameter Set, SPS) 位元組陣列。</param>
+    /// <param name="pps">圖像參數集 (Picture Parameter Set, PPS) 位元組陣列。</param>
+    /// <param name="nalLengthSize">NAL 單元長度欄位大小（位元組數，範圍 1~4，預設為 4）。</param>
+    /// <param name="width">視訊寬度 (像素)，預設為 0。</param>
+    /// <param name="height">視訊高度 (像素)，預設為 0。</param>
+    /// <exception cref="ArgumentException">當 <paramref name="codec"/> 不為 H.264 或參數集不符合規格時擲出。</exception>
+    /// <exception cref="ArgumentNullException">當 <paramref name="sps"/> 或 <paramref name="pps"/> 為 null 時擲出。</exception>
+    /// <exception cref="ArgumentOutOfRangeException">當 <paramref name="nalLengthSize"/>、<paramref name="width"/> 或 <paramref name="height"/> 超出有效範圍時擲出。</exception>
     public VideoCodecConfiguration(
         VideoCodec codec,
         byte[] sps,
@@ -42,7 +64,19 @@ public sealed class VideoCodecConfiguration
         Height = height;
     }
 
-    /// <summary>Creates an H.265 configuration containing VPS, SPS, and PPS.</summary>
+    /// <summary>
+    /// 初始化包含 VPS、SPS 與 PPS 的 H.265 (HEVC) <see cref="VideoCodecConfiguration"/> 類別新實例。
+    /// </summary>
+    /// <param name="codec">視訊編解碼器型別（必須為 <see cref="VideoCodec.H265"/>）。</param>
+    /// <param name="vps">視訊參數集 (Video Parameter Set, VPS) 位元組陣列。</param>
+    /// <param name="sps">序列參數集 (Sequence Parameter Set, SPS) 位元組陣列。</param>
+    /// <param name="pps">圖像參數集 (Picture Parameter Set, PPS) 位元組陣列。</param>
+    /// <param name="nalLengthSize">NAL 單元長度欄位大小（位元組數，範圍 1~4，預設為 4）。</param>
+    /// <param name="width">視訊寬度 (像素)，預設為 0。</param>
+    /// <param name="height">視訊高度 (像素)，預設為 0。</param>
+    /// <exception cref="ArgumentException">當 <paramref name="codec"/> 不為 H.265 或參數集不符合規格時擲出。</exception>
+    /// <exception cref="ArgumentNullException">當 <paramref name="vps"/>、<paramref name="sps"/> 或 <paramref name="pps"/> 為 null 時擲出。</exception>
+    /// <exception cref="ArgumentOutOfRangeException">當 <paramref name="nalLengthSize"/>、<paramref name="width"/> 或 <paramref name="height"/> 超出有效範圍時擲出。</exception>
     public VideoCodecConfiguration(
         VideoCodec codec,
         byte[] vps,
@@ -75,7 +109,15 @@ public sealed class VideoCodecConfiguration
         Height = height;
     }
 
-    /// <summary>Creates an H.264 configuration without relying on constructor overload selection.</summary>
+    /// <summary>
+    /// 建立 H.264 <see cref="VideoCodecConfiguration"/> 實例的靜態工廠方法。
+    /// </summary>
+    /// <param name="sps">序列參數集 (SPS) 位元組陣列。</param>
+    /// <param name="pps">圖像參數集 (PPS) 位元組陣列。</param>
+    /// <param name="nalLengthSize">NAL 單元長度欄位大小（位元組數，範圍 1~4，預設為 4）。</param>
+    /// <param name="width">視訊寬度 (像素)，預設為 0。</param>
+    /// <param name="height">視訊高度 (像素)，預設為 0。</param>
+    /// <returns>已初始化的 H.264 <see cref="VideoCodecConfiguration"/> 實例。</returns>
     public static VideoCodecConfiguration CreateH264(
         byte[] sps,
         byte[] pps,
@@ -86,7 +128,16 @@ public sealed class VideoCodecConfiguration
         return new VideoCodecConfiguration(VideoCodec.H264, sps, pps, nalLengthSize, width, height);
     }
 
-    /// <summary>Creates an H.265 configuration without relying on constructor overload selection.</summary>
+    /// <summary>
+    /// 建立 H.265 (HEVC) <see cref="VideoCodecConfiguration"/> 實例的靜態工廠方法。
+    /// </summary>
+    /// <param name="vps">視訊參數集 (VPS) 位元組陣列。</param>
+    /// <param name="sps">序列參數集 (SPS) 位元組陣列。</param>
+    /// <param name="pps">圖像參數集 (PPS) 位元組陣列。</param>
+    /// <param name="nalLengthSize">NAL 單元長度欄位大小（位元組數，範圍 1~4，預設為 4）。</param>
+    /// <param name="width">視訊寬度 (像素)，預設為 0。</param>
+    /// <param name="height">視訊高度 (像素)，預設為 0。</param>
+    /// <returns>已初始化的 H.265 <see cref="VideoCodecConfiguration"/> 實例。</returns>
     public static VideoCodecConfiguration CreateH265(
         byte[] vps,
         byte[] sps,
@@ -98,26 +149,44 @@ public sealed class VideoCodecConfiguration
         return new VideoCodecConfiguration(VideoCodec.H265, vps, sps, pps, nalLengthSize, width, height);
     }
 
+    /// <summary>
+    /// 取得視訊編解碼器型別 (<see cref="VideoCodec"/>)。
+    /// </summary>
     public VideoCodec Codec { get; }
 
-    /// <summary>Returns a defensive copy of the HEVC VPS, or an empty array for H.264.</summary>
+    /// <summary>
+    /// 取得 HEVC VPS 位元組陣列的防禦性複製；若為 H.264 則回傳空陣列。
+    /// </summary>
     public byte[] Vps => Copy(_vps);
 
-    /// <summary>Returns a defensive copy of the sequence parameter set.</summary>
+    /// <summary>
+    /// 取得序列參數集 (SPS) 位元組陣列的防禦性複製。
+    /// </summary>
     public byte[] Sps => Copy(_sps);
 
-    /// <summary>Returns a defensive copy of the picture parameter set.</summary>
+    /// <summary>
+    /// 取得圖像參數集 (PPS) 位元組陣列的防禦性複製。
+    /// </summary>
     public byte[] Pps => Copy(_pps);
 
+    /// <summary>
+    /// 取得 NAL 單元長度欄位大小（位元組數）。
+    /// </summary>
     public int NalLengthSize { get; }
 
-    /// <summary>Alias for callers that use the ISO BMFF terminology.</summary>
+    /// <summary>
+    /// 取得符合 ISO BMFF 術語的 NAL 單元長度欄位大小別名。
+    /// </summary>
     public int NalUnitLengthSize => NalLengthSize;
 
-    /// <summary>Optional coded width written into the visual sample entry.</summary>
+    /// <summary>
+    /// 取得寫入視覺樣本條目的視訊寬度 (像素)。
+    /// </summary>
     public int Width { get; }
 
-    /// <summary>Optional coded height written into the visual sample entry.</summary>
+    /// <summary>
+    /// 取得寫入視覺樣本條目的視訊高度 (像素)。
+    /// </summary>
     public int Height { get; }
 
     internal byte[] VpsBytes => _vps;
@@ -338,22 +407,34 @@ public sealed class AacCodecConfiguration
         return new AacCodecConfiguration(audioSpecificConfig, parsed.SampleRate, parsed.ChannelConfiguration);
     }
 
-    /// <summary>取得 MPEG-4 AudioSpecificConfig 二進位標頭的防禦性複製。</summary>
+    /// <summary>
+    /// 取得 MPEG-4 AudioSpecificConfig 二進位標頭的防禦性複製。
+    /// </summary>
     public byte[] AudioSpecificConfig => Copy(_audioSpecificConfig);
 
-    /// <summary>取得音訊取樣率 (Hz)。</summary>
+    /// <summary>
+    /// 取得音訊取樣率 (Hz)。
+    /// </summary>
     public int SampleRate { get; }
 
-    /// <summary>取得音訊取樣率 (Hz) 別名。</summary>
+    /// <summary>
+    /// 取得音訊取樣率 (Hz) 別名。
+    /// </summary>
     public int SampleRateHz => SampleRate;
 
-    /// <summary>取得 MPEG-4 聲道配置數 (1~7)。</summary>
+    /// <summary>
+    /// 取得 MPEG-4 聲道配置數 (1~7)。
+    /// </summary>
     public int ChannelConfiguration { get; }
 
-    /// <summary>取得聲道數別名。</summary>
+    /// <summary>
+    /// 取得聲道數別名。
+    /// </summary>
     public int Channels => ChannelConfiguration;
 
-    /// <summary>取得 MPEG-4 音訊物件類型 (Audio Object Type, AOT)。</summary>
+    /// <summary>
+    /// 取得 MPEG-4 音訊物件類型 (Audio Object Type, AOT)。
+    /// </summary>
     public int AudioObjectType { get; }
 
     internal byte[] AudioSpecificConfigBytes => _audioSpecificConfig;
@@ -366,11 +447,24 @@ public sealed class AacCodecConfiguration
     }
 }
 
-/// <summary>An encoded video NAL unit with presentation and decode timing.</summary>
+/// <summary>
+/// 表示包含顯示與解碼時間標記的已編碼視訊 NAL 單元 (Access Unit)。
+/// </summary>
 public sealed class EncodedVideoNalUnit
 {
     private readonly byte[] _data;
 
+    /// <summary>
+    /// 初始化 <see cref="EncodedVideoNalUnit"/> 類別的新實例。
+    /// </summary>
+    /// <param name="data">已編碼的 NAL 單元資料位元組陣列。</param>
+    /// <param name="presentationTimestamp">顯示時間標記 (PTS)。</param>
+    /// <param name="decodeTimestamp">解碼時間標記 (DTS)。</param>
+    /// <param name="duration">影格持續時間。</param>
+    /// <param name="isKeyFrame">指示此 NAL 單元是否為關鍵影格 (Keyframe / IDR)。</param>
+    /// <exception cref="ArgumentNullException">當 <paramref name="data"/> 為 null 時擲出。</exception>
+    /// <exception cref="ArgumentException">當 <paramref name="data"/> 為長度零的陣列時擲出。</exception>
+    /// <exception cref="ArgumentOutOfRangeException">當時間標記為負值或持續時間小於等於零時擲出。</exception>
     public EncodedVideoNalUnit(
         byte[] data,
         TimeSpan presentationTimestamp,
@@ -435,12 +529,39 @@ public sealed class EncodedVideoNalUnit
         }
     }
 
+    /// <summary>
+    /// 取得已編碼 NAL 單元資料的防禦性複製。
+    /// </summary>
     public byte[] Data => Copy(_data);
+
+    /// <summary>
+    /// 取得顯示時間標記 (Presentation Timestamp, PTS)。
+    /// </summary>
     public TimeSpan PresentationTimestamp { get; }
+
+    /// <summary>
+    /// 取得解碼時間標記 (Decode Timestamp, DTS)。
+    /// </summary>
     public TimeSpan DecodeTimestamp { get; }
+
+    /// <summary>
+    /// 取得影格持續時間。
+    /// </summary>
     public TimeSpan Duration { get; }
+
+    /// <summary>
+    /// 取得指示此 NAL 單元是否為關鍵影格的布林值。
+    /// </summary>
     public bool IsKeyFrame { get; }
+
+    /// <summary>
+    /// 取得顯示時間標記 (PTS) 別名。
+    /// </summary>
     public TimeSpan Pts => PresentationTimestamp;
+
+    /// <summary>
+    /// 取得解碼時間標記 (DTS) 別名。
+    /// </summary>
     public TimeSpan Dts => DecodeTimestamp;
 
     internal byte[] DataBytes => _data;
@@ -474,11 +595,23 @@ public sealed class EncodedVideoNalUnit
     }
 }
 
-/// <summary>An encoded AAC access unit with presentation and decode timing.</summary>
+/// <summary>
+/// 表示包含顯示與解碼時間標記的已編碼 AAC 音訊樣本 (Access Unit)。
+/// </summary>
 public sealed class EncodedAudioSample
 {
     private readonly byte[] _data;
 
+    /// <summary>
+    /// 初始化 <see cref="EncodedAudioSample"/> 類別的新實例。
+    /// </summary>
+    /// <param name="data">已編碼的 AAC 樣本資料位元組陣列。</param>
+    /// <param name="presentationTimestamp">顯示時間標記 (PTS)。</param>
+    /// <param name="decodeTimestamp">解碼時間標記 (DTS)。</param>
+    /// <param name="duration">樣本持續時間。</param>
+    /// <exception cref="ArgumentNullException">當 <paramref name="data"/> 為 null 時擲出。</exception>
+    /// <exception cref="ArgumentException">當 <paramref name="data"/> 為長度零的陣列時擲出。</exception>
+    /// <exception cref="ArgumentOutOfRangeException">當時間標記為負值或持續時間小於等於零時擲出。</exception>
     public EncodedAudioSample(
         byte[] data,
         TimeSpan presentationTimestamp,
@@ -539,11 +672,34 @@ public sealed class EncodedAudioSample
         }
     }
 
+    /// <summary>
+    /// 取得已編碼 AAC 樣本資料的防禦性複製。
+    /// </summary>
     public byte[] Data => Copy(_data);
+
+    /// <summary>
+    /// 取得顯示時間標記 (Presentation Timestamp, PTS)。
+    /// </summary>
     public TimeSpan PresentationTimestamp { get; }
+
+    /// <summary>
+    /// 取得解碼時間標記 (Decode Timestamp, DTS)。
+    /// </summary>
     public TimeSpan DecodeTimestamp { get; }
+
+    /// <summary>
+    /// 取得樣本持續時間。
+    /// </summary>
     public TimeSpan Duration { get; }
+
+    /// <summary>
+    /// 取得顯示時間標記 (PTS) 別名。
+    /// </summary>
     public TimeSpan Pts => PresentationTimestamp;
+
+    /// <summary>
+    /// 取得解碼時間標記 (DTS) 別名。
+    /// </summary>
     public TimeSpan Dts => DecodeTimestamp;
 
     internal byte[] DataBytes => _data;
@@ -575,8 +731,17 @@ public sealed class EncodedAudioSample
     }
 }
 
+/// <summary>
+/// 為視訊 NAL 單元讀取事件提供資料。
+/// </summary>
 public sealed class VideoNalUnitReadEventArgs : EventArgs
 {
+    /// <summary>
+    /// 使用指定的視訊 NAL 單元與編解碼器組態初始化 <see cref="VideoNalUnitReadEventArgs"/> 類別的新實例。
+    /// </summary>
+    /// <param name="sample">已編碼的視訊 NAL 單元。</param>
+    /// <param name="configuration">視訊編解碼器組態資訊。</param>
+    /// <exception cref="ArgumentNullException">當 <paramref name="sample"/> 或 <paramref name="configuration"/> 為 null 時擲出。</exception>
     public VideoNalUnitReadEventArgs(EncodedVideoNalUnit sample, VideoCodecConfiguration configuration)
     {
         if (sample == null) throw new ArgumentNullException(nameof(sample));
@@ -588,18 +753,58 @@ public sealed class VideoNalUnitReadEventArgs : EventArgs
         IsKeyFrame = sample.IsKeyFrame;
     }
 
+    /// <summary>
+    /// 取得視訊 NAL 單元資料的防禦性複製。
+    /// </summary>
     public byte[] Data { get; }
+
+    /// <summary>
+    /// 取得顯示時間標記 (Presentation Timestamp, PTS)。
+    /// </summary>
     public TimeSpan PresentationTimestamp { get; }
+
+    /// <summary>
+    /// 取得解碼時間標記 (Decode Timestamp, DTS)。
+    /// </summary>
     public TimeSpan DecodeTimestamp { get; }
+
+    /// <summary>
+    /// 取得影格持續時間。
+    /// </summary>
     public TimeSpan Duration { get; }
+
+    /// <summary>
+    /// 取得指示此 NAL 單元是否為關鍵影格的布林值。
+    /// </summary>
     public bool IsKeyFrame { get; }
+
+    /// <summary>
+    /// 取得對應的視訊編解碼器組態資訊。
+    /// </summary>
     public VideoCodecConfiguration Configuration { get; }
+
+    /// <summary>
+    /// 取得顯示時間標記 (PTS) 別名。
+    /// </summary>
     public TimeSpan Pts => PresentationTimestamp;
+
+    /// <summary>
+    /// 取得解碼時間標記 (DTS) 別名。
+    /// </summary>
     public TimeSpan Dts => DecodeTimestamp;
 }
 
+/// <summary>
+/// 為 AAC 音訊樣本讀取事件提供資料。
+/// </summary>
 public sealed class AacSampleReadEventArgs : EventArgs
 {
+    /// <summary>
+    /// 使用指定的 AAC 音訊樣本與編解碼器組態初始化 <see cref="AacSampleReadEventArgs"/> 類別的新實例。
+    /// </summary>
+    /// <param name="sample">已編碼的 AAC 音訊樣本。</param>
+    /// <param name="configuration">AAC 音訊編解碼器組態資訊。</param>
+    /// <exception cref="ArgumentNullException">當 <paramref name="sample"/> 或 <paramref name="configuration"/> 為 null 時擲出。</exception>
     public AacSampleReadEventArgs(EncodedAudioSample sample, AacCodecConfiguration configuration)
     {
         if (sample == null) throw new ArgumentNullException(nameof(sample));
@@ -610,14 +815,53 @@ public sealed class AacSampleReadEventArgs : EventArgs
         Duration = sample.Duration;
     }
 
+    /// <summary>
+    /// 取得 AAC 音訊樣本資料的防禦性複製。
+    /// </summary>
     public byte[] Data { get; }
+
+    /// <summary>
+    /// 取得顯示時間標記 (Presentation Timestamp, PTS)。
+    /// </summary>
     public TimeSpan PresentationTimestamp { get; }
+
+    /// <summary>
+    /// 取得解碼時間標記 (Decode Timestamp, DTS)。
+    /// </summary>
     public TimeSpan DecodeTimestamp { get; }
+
+    /// <summary>
+    /// 取得樣本持續時間。
+    /// </summary>
     public TimeSpan Duration { get; }
+
+    /// <summary>
+    /// 取得對應的 AAC 音訊編解碼器組態資訊。
+    /// </summary>
     public AacCodecConfiguration Configuration { get; }
+
+    /// <summary>
+    /// 取得音訊取樣率 (Hz)。
+    /// </summary>
     public int SampleRate => Configuration.SampleRate;
+
+    /// <summary>
+    /// 取得聲道配置數 (1~7)。
+    /// </summary>
     public int ChannelConfiguration => Configuration.ChannelConfiguration;
+
+    /// <summary>
+    /// 取得 MPEG-4 AudioSpecificConfig 二進位標頭的防禦性複製。
+    /// </summary>
     public byte[] AudioSpecificConfig => Configuration.AudioSpecificConfig;
+
+    /// <summary>
+    /// 取得顯示時間標記 (PTS) 別名。
+    /// </summary>
     public TimeSpan Pts => PresentationTimestamp;
+
+    /// <summary>
+    /// 取得解碼時間標記 (DTS) 別名。
+    /// </summary>
     public TimeSpan Dts => DecodeTimestamp;
 }

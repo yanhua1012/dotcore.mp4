@@ -10,8 +10,7 @@ using Xunit;
 namespace DotCore.Mp4.Tests;
 
 /// <summary>
-/// Extracts the marker-delimited C# usage snippets from README.md and compiles them
-/// against the current DotCore.Mp4 public surface, so the docs cannot drift from the API.
+/// 提取 README.md 範例程式片段並進行動態編譯與相容性測試套件。
 /// </summary>
 public sealed class ReadmeSnippetTests
 {

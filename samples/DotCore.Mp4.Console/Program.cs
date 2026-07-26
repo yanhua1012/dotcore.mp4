@@ -6,6 +6,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using DotCore.Mp4;
 
+/// <summary>
+/// 控制台範例應用程式的主要進入點與展示邏輯。
+/// </summary>
 internal static class Program
 {
     private const string H264AnnexBBase64 =
@@ -17,6 +20,11 @@ internal static class Program
     private static readonly byte[] AacAccessUnit = Convert.FromBase64String(
         "3gIATGF2YzYwLjMxLjEwMgACcKVbYKhtUQtCff+nXj2mb315k8ezckh5ySLknwgTJUyXR2kRhUyUYViWWp0tTtWnKrSTm/6pLAciVZjPxo6jV3a3GqbbJtqmcEQRTWprTJTJTJQMDAwMDAwMDAwMDAwMDAxs2DIpZZYooooooooooooooouA");
 
+    /// <summary>
+    /// 控制台程式主要進入點。
+    /// </summary>
+    /// <param name="args">命令列引數：[輸出路徑] [寫入模式] [編解碼器] [I/O模式]。</param>
+    /// <returns>執行結果程式碼 (0 表示成功，非 0 表示失敗)。</returns>
     private static async Task<int> Main(string[] args)
     {
         if (args.Length > 4 ||
@@ -63,6 +71,9 @@ internal static class Program
         return 0;
     }
 
+    /// <summary>
+    /// 以同步方式將媒體樣本寫入指定的 MP4 檔案。
+    /// </summary>
     private static void WriteSync(
         string outputPath,
         Mp4WriteMode mode,
@@ -79,6 +90,9 @@ internal static class Program
         writer.FinalizeFile();
     }
 
+    /// <summary>
+    /// 以非同步方式將媒體樣本寫入指定的 MP4 檔案。
+    /// </summary>
     private static async Task WriteAsync(
         string outputPath,
         Mp4WriteMode mode,
@@ -96,6 +110,9 @@ internal static class Program
         await writer.FinalizeFileAsync();
     }
 
+    /// <summary>
+    /// 以同步方式按解碼時間標記順序交錯提交視訊與音訊樣本。
+    /// </summary>
     private static void SubmitSamplesSync(
         Mp4Writer writer,
         VideoFixture fixture,
@@ -130,6 +147,9 @@ internal static class Program
         }
     }
 
+    /// <summary>
+    /// 以非同步方式按解碼時間標記順序交錯提交視訊與音訊樣本。
+    /// </summary>
     private static async Task SubmitSamplesAsync(
         Mp4Writer writer,
         VideoFixture fixture,
@@ -164,6 +184,9 @@ internal static class Program
         }
     }
 
+    /// <summary>
+    /// 使用讀取器重新開啟 MP4 檔案，並印出解析後的組態資訊與定時媒體事件。
+    /// </summary>
     private static void PrintReader(Mp4Reader reader)
     {
         var parsedVideo = reader.VideoConfiguration ??
@@ -199,6 +222,9 @@ internal static class Program
         reader.Read();
     }
 
+    /// <summary>
+    /// 解析命令列中的 I/O 模式參數 (sync 或 async)。
+    /// </summary>
     private static bool TryParseIoMode(string? value, out bool useAsync, out string ioName)
     {
         ioName = string.IsNullOrEmpty(value) ? "sync" : value.ToLowerInvariant();
@@ -216,6 +242,9 @@ internal static class Program
         }
     }
 
+    /// <summary>
+    /// 解析命令列中的寫入模式參數 (progressive、faststart 或 fragmented)。
+    /// </summary>
     private static bool TryParseMode(
         string? value,
         out Mp4WriteMode mode,
@@ -239,6 +268,9 @@ internal static class Program
         }
     }
 
+    /// <summary>
+    /// 解析命令列中的視訊編解碼器參數 (h264 或 h265)。
+    /// </summary>
     private static bool TryParseCodec(string? value, out VideoCodec codec, out string codecName)
     {
         codecName = string.IsNullOrEmpty(value) ? "h264" : value.ToLowerInvariant();
@@ -256,6 +288,9 @@ internal static class Program
         }
     }
 
+    /// <summary>
+    /// 依指定的視訊編解碼器建立測試用視訊資料容器。
+    /// </summary>
     private static VideoFixture CreateVideoFixture(VideoCodec codec)
     {
         var nals = SplitAnnexB(Convert.FromBase64String(
@@ -287,12 +322,18 @@ internal static class Program
             h264Frames.Select(nal => (nal[0] & 0x1f) == 5).ToArray());
     }
 
+    /// <summary>
+    /// 解析 H.265 NAL 單元型別。
+    /// </summary>
     private static int H265NalType(byte[] nal)
     {
         if (nal.Length < 2) throw new InvalidDataException("The Console H.265 fixture contains an incomplete NAL unit.");
         return (nal[0] >> 1) & 0x3f;
     }
 
+    /// <summary>
+    /// 將 Annex B 位元組流切割為個別 NAL 單元。
+    /// </summary>
     private static IReadOnlyList<byte[]> SplitAnnexB(byte[] data)
     {
         var result = new List<byte[]>();
@@ -329,13 +370,22 @@ internal static class Program
         return result;
     }
 
+    /// <summary>
+    /// 將位元組陣列轉換為十六進位字串。
+    /// </summary>
     private static string Hex(byte[] value)
     {
         return BitConverter.ToString(value).Replace("-", string.Empty);
     }
 
+    /// <summary>
+    /// 封裝視訊組態與影格資料的測試容器。
+    /// </summary>
     private sealed class VideoFixture
     {
+        /// <summary>
+        /// 初始化 <see cref="VideoFixture"/> 類別的新實例。
+        /// </summary>
         public VideoFixture(
             VideoCodecConfiguration configuration,
             IReadOnlyList<byte[]> frames,
@@ -347,8 +397,19 @@ internal static class Program
             KeyFrames = keyFrames;
         }
 
+        /// <summary>
+        /// 取得視訊編解碼器組態。
+        /// </summary>
         public VideoCodecConfiguration Configuration { get; }
+
+        /// <summary>
+        /// 取得視訊影格資料集合。
+        /// </summary>
         public IReadOnlyList<byte[]> Frames { get; }
+
+        /// <summary>
+        /// 取得關鍵影格標記集合。
+        /// </summary>
         public IReadOnlyList<bool> KeyFrames { get; }
     }
 }

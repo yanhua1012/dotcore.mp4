@@ -2,14 +2,23 @@ using DotCore.Mp4;
 
 namespace DotCore.Mp4.Benchmarks;
 
+/// <summary>
+/// 提供基準測試所需之固定 Media Fixture 與 Scenario 矩陣的工具類別。
+/// </summary>
 internal static class FixedFixtureMatrix
 {
     private const int LargeNalBytes = 128 * 1024;
     private const int LargeAacBytes = 128 * 1024;
     private const int TinyNalCount = 128;
 
+    /// <summary>
+    /// 取得所有定義好的基準測試情境列表。
+    /// </summary>
     public static IReadOnlyList<BenchmarkScenario> Scenarios { get; } = CreateScenarios();
 
+    /// <summary>
+    /// 依指定的視訊編解碼器建立測試用組態。
+    /// </summary>
     public static VideoCodecConfiguration VideoConfiguration(VideoCodec codec)
     {
         return codec == VideoCodec.H264
@@ -28,11 +37,17 @@ internal static class FixedFixtureMatrix
                 16);
     }
 
+    /// <summary>
+    /// 建立測試用 AAC 44.1kHz 雙聲道組態。
+    /// </summary>
     public static AacCodecConfiguration AacConfiguration()
     {
         return AacCodecConfiguration.CreateAacLc(44100, 2);
     }
 
+    /// <summary>
+    /// 建立決定性的測試用視訊 NAL 單元位元組陣列。
+    /// </summary>
     public static byte[] VideoNal(VideoCodec codec, int size, bool keyFrame, int seed)
     {
         if (size < 2) throw new ArgumentOutOfRangeException(nameof(size));
@@ -50,8 +65,14 @@ internal static class FixedFixtureMatrix
         return bytes;
     }
 
+    /// <summary>
+    /// 建立決定性的測試用 AAC Access Unit 位元組陣列。
+    /// </summary>
     public static byte[] AacAccessUnit(int size, int seed) => DeterministicBytes(size, seed);
 
+    /// <summary>
+    /// 將多個 NAL 單元加上 4 位元組 Annex B 起始碼 (0x00, 0x00, 0x00, 0x01) 打包成位元組陣列。
+    /// </summary>
     public static byte[] AnnexB(params byte[][] nals)
     {
         var length = nals.Sum(nal => checked(4 + nal.Length));

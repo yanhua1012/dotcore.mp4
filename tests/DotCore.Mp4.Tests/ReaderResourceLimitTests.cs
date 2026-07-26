@@ -4,8 +4,9 @@ using System.Reflection;
 using DotCore.Mp4;
 using Xunit;
 
-namespace DotCore.Mp4.Tests;
-
+/// <summary>
+/// MP4 Reader 資源限制防護測試套件。
+/// </summary>
 public sealed class ReaderResourceLimitTests
 {
     [Fact]

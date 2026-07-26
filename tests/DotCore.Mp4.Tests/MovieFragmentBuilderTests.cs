@@ -3,8 +3,9 @@ using System.Text;
 using DotCore.Mp4;
 using Xunit;
 
-namespace DotCore.Mp4.Tests;
-
+/// <summary>
+/// Movie Fragment 建立器與片段構建測試套件。
+/// </summary>
 public sealed class MovieFragmentBuilderTests
 {
     [Fact]

@@ -10,9 +10,7 @@ using Xunit;
 namespace DotCore.Mp4.Tests;
 
 /// <summary>
-/// failing structural/public API tests: requires the approved additive async members
-/// with optional trailing CancellationToken, Traditional-Chinese XML documentation,
-/// a netstandard2.0 production target, and zero production package drift.
+/// 非同步 API 契約與公用介面結構檢視測試套件。
 /// </summary>
 public sealed class AsyncApiContractTests
 {

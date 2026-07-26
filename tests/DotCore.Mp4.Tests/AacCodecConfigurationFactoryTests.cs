@@ -4,6 +4,9 @@ using Xunit;
 
 namespace DotCore.Mp4.Tests;
 
+/// <summary>
+/// AAC 編解碼器組態工廠方法測試套件。
+/// </summary>
 public sealed class AacCodecConfigurationFactoryTests
 {
     [Fact]

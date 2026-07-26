@@ -8,7 +8,9 @@ using System.Threading.Tasks;
 
 namespace DotCore.Mp4;
 
-/// <summary>將 progressive、faststart 或 fragmented MP4 寫入 caller-owned stream。</summary>
+/// <summary>
+/// 將 progressive、faststart 或 fragmented MP4 寫入 caller-owned stream。
+/// </summary>
 public sealed class Mp4Writer : IDisposable
 {
     private readonly Stream _output;
@@ -34,15 +36,27 @@ public sealed class Mp4Writer : IDisposable
     private int _fragmentBufferedBytes;
     private uint _fragmentSequenceNumber = 1;
 
+    /// <summary>
+    /// 使用指定的輸出串流與串流保持開啟選項初始化預設 progressive 模式的 <see cref="Mp4Writer"/> 類別新實例。
+    /// </summary>
+    /// <param name="output">接收 MP4 資料的可寫入且可搜尋串流。</param>
+    /// <param name="leaveOpen">若為 <see langword="true"/>，則在釋放寫入器時保持 <paramref name="output"/> 串流開啟；否則為 <see langword="false"/>（預設為 <see langword="true"/>）。</param>
+    /// <exception cref="ArgumentNullException">當 <paramref name="output"/> 為 null 時擲出。</exception>
+    /// <exception cref="InvalidOperationException">當 <paramref name="output"/> 不可寫入或不可搜尋時擲出。</exception>
     public Mp4Writer(Stream output, bool leaveOpen = true)
         : this(output, new Mp4WriterOptions(), leaveOpen)
     {
     }
 
-    /// <summary>以指定的輸出選項建立 MP4 writer。</summary>
-    /// <param name="output">接收 MP4 資料的 caller-owned stream。</param>
-    /// <param name="options">輸出模式與資源限制；writer 會在建構時複製其值。</param>
-    /// <param name="leaveOpen">writer 釋放時是否保持 <paramref name="output"/> 開啟。</param>
+    /// <summary>
+    /// 使用指定的輸出串流、寫入選項與串流保持開啟選項初始化 <see cref="Mp4Writer"/> 類別的新實例。
+    /// </summary>
+    /// <param name="output">接收 MP4 資料的可寫入串流。</param>
+    /// <param name="options">寫入器輸出模式與資源限制選項。</param>
+    /// <param name="leaveOpen">若為 <see langword="true"/>，則在釋放寫入器時保持 <paramref name="output"/> 串流開啟；否則為 <see langword="false"/>（預設為 <see langword="true"/>）。</param>
+    /// <exception cref="ArgumentNullException">當 <paramref name="output"/> 或 <paramref name="options"/> 為 null 時擲出。</exception>
+    /// <exception cref="ArgumentOutOfRangeException">當 <paramref name="options"/> 中的模式無效或緩衝區限制小於等於零時擲出。</exception>
+    /// <exception cref="InvalidOperationException">當 <paramref name="output"/> 串流能力不符合所選寫入模式要求時擲出。</exception>
     public Mp4Writer(Stream output, Mp4WriterOptions options, bool leaveOpen = true)
         : this(output, options, leaveOpen, writeHeader: true)
     {
@@ -78,7 +92,9 @@ public sealed class Mp4Writer : IDisposable
         writer.WriteUInt64(0);
     }
 
-    /// <summary>以非同步方式建立 <see cref="Mp4Writer"/>，使用 caller stream 的 <see cref="Stream.WriteAsync(byte[], int, int, CancellationToken)"/> 寫出 progressive 或 faststart 的初始 header；fragmented 模式依既有 lazy-start 語意不輸出任何 bytes。</summary>
+    /// <summary>
+    /// 以非同步方式建立 <see cref="Mp4Writer"/>，使用 caller stream 的 <see cref="Stream.WriteAsync(byte[], int, int, CancellationToken)"/> 寫出 progressive 或 faststart 的初始 header；fragmented 模式依既有 lazy-start 語意不輸出任何 bytes。
+    /// </summary>
     /// <param name="output">接收 MP4 資料的 caller-owned stream。</param>
     /// <param name="leaveOpen">writer 釋放時是否保持 <paramref name="output"/> 開啟。</param>
     /// <param name="cancellationToken">可取消初始 header 輸出的 token。</param>
@@ -94,7 +110,9 @@ public sealed class Mp4Writer : IDisposable
         return CreateAsync(output, new Mp4WriterOptions(), leaveOpen, cancellationToken);
     }
 
-    /// <summary>以非同步方式建立 <see cref="Mp4Writer"/>，使用 caller stream 的 <see cref="Stream.WriteAsync(byte[], int, int, CancellationToken)"/> 寫出 progressive 或 faststart 的初始 header；fragmented 模式依既有 lazy-start 語意不輸出任何 bytes。</summary>
+    /// <summary>
+    /// 以非同步方式建立 <see cref="Mp4Writer"/>，使用 caller stream 的 <see cref="Stream.WriteAsync(byte[], int, int, CancellationToken)"/> 寫出 progressive 或 faststart 的初始 header；fragmented 模式依既有 lazy-start 語意不輸出任何 bytes。
+    /// </summary>
     /// <param name="output">接收 MP4 資料的 caller-owned stream。</param>
     /// <param name="options">輸出模式與資源限制；writer 會複製其值。</param>
     /// <param name="leaveOpen">writer 釋放時是否保持 <paramref name="output"/> 開啟。</param>
@@ -207,13 +225,34 @@ public sealed class Mp4Writer : IDisposable
         }
     }
 
+    /// <summary>
+    /// 取得目前的視訊編解碼器組態資訊；若尚未設定則回傳 <see langword="null"/>。
+    /// </summary>
     public VideoCodecConfiguration? VideoConfiguration => _videoConfiguration;
+
+    /// <summary>
+    /// 取得目前的 AAC 音訊編解碼器組態資訊；若尚未設定則回傳 <see langword="null"/>。
+    /// </summary>
     public AacCodecConfiguration? AudioConfiguration => _audioConfiguration;
 
+    /// <summary>
+    /// 設定視訊編解碼器組態資訊的別名方法。
+    /// </summary>
+    /// <param name="configuration">視訊編解碼器組態資訊。</param>
     public void ConfigureVideo(VideoCodecConfiguration configuration) => SetVideoCodecConfiguration(configuration);
 
+    /// <summary>
+    /// 設定視訊編解碼器組態資訊的別名方法。
+    /// </summary>
+    /// <param name="configuration">視訊編解碼器組態資訊。</param>
     public void SetVideoConfiguration(VideoCodecConfiguration configuration) => SetVideoCodecConfiguration(configuration);
 
+    /// <summary>
+    /// 設定寫入器使用的視訊編解碼器組態資訊。
+    /// </summary>
+    /// <param name="configuration">視訊編解碼器組態資訊。</param>
+    /// <exception cref="ArgumentNullException">當 <paramref name="configuration"/> 為 null 時擲出。</exception>
+    /// <exception cref="InvalidOperationException">當已寫入視訊樣本或組態已被重複設定時擲出。</exception>
     public void SetVideoCodecConfiguration(VideoCodecConfiguration configuration)
     {
         EnterOperation();
@@ -230,10 +269,24 @@ public sealed class Mp4Writer : IDisposable
         finally { ExitOperationToIdleOnSyncFailure(); }
     }
 
+    /// <summary>
+    /// 設定 AAC 音訊編解碼器組態資訊的別名方法。
+    /// </summary>
+    /// <param name="configuration">AAC 音訊編解碼器組態資訊。</param>
     public void ConfigureAudio(AacCodecConfiguration configuration) => SetAudioCodecConfiguration(configuration);
 
+    /// <summary>
+    /// 設定 AAC 音訊編解碼器組態資訊的別名方法。
+    /// </summary>
+    /// <param name="configuration">AAC 音訊編解碼器組態資訊。</param>
     public void SetAudioConfiguration(AacCodecConfiguration configuration) => SetAudioCodecConfiguration(configuration);
 
+    /// <summary>
+    /// 設定寫入器使用的 AAC 音訊編解碼器組態資訊。
+    /// </summary>
+    /// <param name="configuration">AAC 音訊編解碼器組態資訊。</param>
+    /// <exception cref="ArgumentNullException">當 <paramref name="configuration"/> 為 null 時擲出。</exception>
+    /// <exception cref="InvalidOperationException">當已寫入音訊樣本或組態已被重複設定時擲出。</exception>
     public void SetAudioCodecConfiguration(AacCodecConfiguration configuration)
     {
         EnterOperation();
@@ -250,8 +303,19 @@ public sealed class Mp4Writer : IDisposable
         finally { ExitOperationToIdleOnSyncFailure(); }
     }
 
+    /// <summary>
+    /// 將單一視訊 NAL 單元 (Access Unit) 寫入 MP4 串流的別名方法。
+    /// </summary>
+    /// <param name="sample">要寫入的視訊 NAL 單元。</param>
     public void WriteVideo(EncodedVideoNalUnit sample) => WriteVideoNalUnit(sample);
 
+    /// <summary>
+    /// 將單一視訊 NAL 單元 (Access Unit) 寫入 MP4 串流。
+    /// </summary>
+    /// <param name="sample">要寫入的視訊 NAL 單元。</param>
+    /// <exception cref="ArgumentNullException">當 <paramref name="sample"/> 為 null 時擲出。</exception>
+    /// <exception cref="InvalidOperationException">當尚未設定視訊編解碼器組態時擲出。</exception>
+    /// <exception cref="Mp4FormatException">當 DTS 倒退或同 Access Unit 內的 NAL 屬性不一致時擲出。</exception>
     public void WriteVideoNalUnit(EncodedVideoNalUnit sample)
     {
         EnterOperation();
@@ -293,10 +357,25 @@ public sealed class Mp4Writer : IDisposable
         finally { ExitOperationToIdleOnSyncFailure(); }
     }
 
+    /// <summary>
+    /// 將單一 AAC 音訊樣本 (Access Unit) 寫入 MP4 串流的別名方法。
+    /// </summary>
+    /// <param name="sample">要寫入的 AAC 音訊樣本。</param>
     public void WriteAudio(EncodedAudioSample sample) => WriteAudioSample(sample);
 
+    /// <summary>
+    /// 將單一 AAC 音訊樣本 (Access Unit) 寫入 MP4 串流的別名方法。
+    /// </summary>
+    /// <param name="sample">要寫入的 AAC 音訊樣本。</param>
     public void WriteAacSample(EncodedAudioSample sample) => WriteAudioSample(sample);
 
+    /// <summary>
+    /// 將單一 AAC 音訊樣本 (Access Unit) 寫入 MP4 串流。
+    /// </summary>
+    /// <param name="sample">要寫入的 AAC 音訊樣本。</param>
+    /// <exception cref="ArgumentNullException">當 <paramref name="sample"/> 為 null 時擲出。</exception>
+    /// <exception cref="InvalidOperationException">當尚未設定 AAC 編解碼器組態時擲出。</exception>
+    /// <exception cref="Mp4FormatException">當 DTS 倒退時擲出。</exception>
     public void WriteAudioSample(EncodedAudioSample sample)
     {
         EnterOperation();
@@ -344,7 +423,9 @@ public sealed class Mp4Writer : IDisposable
         finally { ExitOperationToIdleOnSyncFailure(); }
     }
 
-    /// <summary>以非同步方式寫入單一 video NAL access unit，使用 caller stream 的 <see cref="Stream.WriteAsync(byte[], int, int, CancellationToken)"/> 輸出 length prefix 與 NAL payload。</summary>
+    /// <summary>
+    /// 以非同步方式寫入單一 video NAL access unit，使用 caller stream 的 <see cref="Stream.WriteAsync(byte[], int, int, CancellationToken)"/> 輸出 length prefix 與 NAL payload。
+    /// </summary>
     /// <param name="sample">要寫入的 video NAL unit。</param>
     /// <param name="cancellationToken">可取消外部輸出的 token。</param>
     /// <returns>代表非同步寫入的工作。</returns>
@@ -417,7 +498,9 @@ public sealed class Mp4Writer : IDisposable
         }
     }
 
-    /// <summary>以非同步方式寫入單一 AAC sample，使用 caller stream 的 <see cref="Stream.WriteAsync(byte[], int, int, CancellationToken)"/>。</summary>
+    /// <summary>
+    /// 以非同步方式寫入單一 AAC sample，使用 caller stream 的 <see cref="Stream.WriteAsync(byte[], int, int, CancellationToken)"/>。
+    /// </summary>
     /// <param name="sample">要寫入的 AAC access unit。</param>
     /// <param name="cancellationToken">可取消外部輸出的 token。</param>
     /// <returns>代表非同步寫入的工作。</returns>
@@ -693,7 +776,10 @@ public sealed class Mp4Writer : IDisposable
         return error is IOException || error is NotSupportedException || error is ObjectDisposedException;
     }
 
-    /// <summary>Backpatches mdat and appends the complete movie metadata.</summary>
+    /// <summary>
+    /// 完成 MP4 檔案寫入，回填 mdat 長度標頭並附加完整的 movie metadata (moov/moof)。
+    /// </summary>
+    /// <exception cref="InvalidOperationException">當未寫入任何視訊或音訊樣本時擲出。</exception>
     public void FinalizeFile()
     {
         EnterFinalize();
@@ -749,7 +835,9 @@ public sealed class Mp4Writer : IDisposable
         }
     }
 
-    /// <summary>以非同步方式 backpatch mdat 並附加完整的 movie metadata，使用 caller stream 的 <see cref="Stream.WriteAsync(byte[], int, int, CancellationToken)"/>。</summary>
+    /// <summary>
+    /// 以非同步方式 backpatch mdat 並附加完整的 movie metadata，使用 caller stream 的 <see cref="Stream.WriteAsync(byte[], int, int, CancellationToken)"/>。
+    /// </summary>
     /// <param name="cancellationToken">可取消 finalization 外部輸出的 token。</param>
     /// <returns>代表非同步 finalization 的工作。</returns>
     /// <remarks>
@@ -856,9 +944,20 @@ public sealed class Mp4Writer : IDisposable
         return buffer;
     }
 
+    /// <summary>
+    /// 完成 MP4 檔案寫入的別名方法。
+    /// </summary>
     public void Complete() => FinalizeFile();
+
+    /// <summary>
+    /// 完成 MP4 檔案寫入的別名方法。
+    /// </summary>
     public void Finish() => FinalizeFile();
 
+    /// <summary>
+    /// 釋放 <see cref="Mp4Writer"/> 所使用的資源。
+    /// </summary>
+    /// <exception cref="InvalidOperationException">當非同步操作尚在進行中時擲出。</exception>
     public void Dispose()
     {
         if (_disposed) return;

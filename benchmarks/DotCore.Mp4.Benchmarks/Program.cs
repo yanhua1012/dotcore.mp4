@@ -7,6 +7,9 @@ using System.Text.Json;
 
 namespace DotCore.Mp4.Benchmarks;
 
+/// <summary>
+/// 基準測試 CLI 工具的核心程式邏輯進入點。
+/// </summary>
 internal static class Program
 {
     private static readonly JsonSerializerOptions JsonOptions = new(BenchmarkJsonContext.Default.Options)
@@ -14,6 +17,11 @@ internal static class Program
         WriteIndented = true
     };
 
+    /// <summary>
+    /// 基準測試 CLI 進入點。
+    /// </summary>
+    /// <param name="args">命令列引數 (baseline, capture, compare, self-test 等)。</param>
+    /// <returns>執行結果 (0 表示成功，非 0 表示失敗)。</returns>
     public static async Task<int> Main(string[] args)
     {
         try

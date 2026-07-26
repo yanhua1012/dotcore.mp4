@@ -6,8 +6,9 @@ using System.Text;
 using DotCore.Mp4;
 using Xunit;
 
-namespace DotCore.Mp4.Tests;
-
+/// <summary>
+/// Writer 寫入模式與預設選項契約測試套件。
+/// </summary>
 public sealed class WriterModeContractTests
 {
     [Fact]

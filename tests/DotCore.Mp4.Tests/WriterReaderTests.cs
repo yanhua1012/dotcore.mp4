@@ -4,8 +4,9 @@ using System.Linq;
 using DotCore.Mp4;
 using Xunit;
 
-namespace DotCore.Mp4.Tests;
-
+/// <summary>
+/// MP4 Writer 與 Reader 核心整合單元測試套件。
+/// </summary>
 public sealed class WriterReaderTests
 {
     [Fact]

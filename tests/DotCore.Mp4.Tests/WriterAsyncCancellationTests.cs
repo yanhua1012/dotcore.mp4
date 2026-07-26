@@ -8,9 +8,7 @@ using Xunit;
 namespace DotCore.Mp4.Tests;
 
 /// <summary>
-/// Deterministic cancellation/failure matrices across progressive, fragmented and faststart
-/// async paths, plus the state/argument precedence matrix. Uses gate-controlled async streams,
-/// never Thread.Sleep.
+/// Writer 非同步取消、失敗層疊與狀態鎖定測試套件。
 /// </summary>
 public sealed class WriterAsyncCancellationTests
 {

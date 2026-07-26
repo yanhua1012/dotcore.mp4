@@ -4,8 +4,9 @@ using System.Text;
 using DotCore.Mp4;
 using Xunit;
 
-namespace DotCore.Mp4.Tests;
-
+/// <summary>
+/// Movie Fragment Payload 來源與記憶體結構測試套件。
+/// </summary>
 public sealed class FragmentPayloadSourceTests
 {
     [Fact]

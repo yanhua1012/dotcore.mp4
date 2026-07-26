@@ -5,8 +5,9 @@ using System.Text;
 using DotCore.Mp4;
 using Xunit;
 
-namespace DotCore.Mp4.Tests;
-
+/// <summary>
+/// 媒體元資料表格與 CTS 偏移量 Box 生成測試套件。
+/// </summary>
 public sealed class MetadataTableTests
 {
     [Fact]

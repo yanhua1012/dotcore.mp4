@@ -6,6 +6,9 @@ using DotCore.Mp4;
 
 namespace DotCore.Mp4.IntegrationTests;
 
+/// <summary>
+/// 提供整合測試用的媒體 Fixture 資料。
+/// </summary>
 internal static class FixtureData
 {
     // FFmpeg 6.1.1 lavfi testsrc 16x16@25, 3 frames, GOP=2, no B-frames,

@@ -6,8 +6,9 @@ using System.Text;
 using DotCore.Mp4;
 using Xunit;
 
-namespace DotCore.Mp4.Tests;
-
+/// <summary>
+/// Fragmented MP4 Writer 功能與結構測試套件。
+/// </summary>
 public sealed class FragmentedWriterTests
 {
     [Fact]

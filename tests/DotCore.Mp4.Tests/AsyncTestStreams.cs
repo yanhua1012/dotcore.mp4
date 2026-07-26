@@ -7,10 +7,7 @@ using System.Threading.Tasks;
 namespace DotCore.Mp4.Tests;
 
 /// <summary>
-/// Instruments a caller stream so synchronous <see cref="Read"/>/<see cref="Write"/> fail,
-/// while async overrides complete through deterministic <see cref="TaskCompletionSource{T}"/>
-/// gates. Records observed tokens, call counts, byte counts and the maximum number of
-/// outstanding async operations, without relying on <see cref="Thread.Sleep"/>.
+/// 僅允許非同步操作的測試閘門串流。拒絕所有同步 Read/Write 呼叫，用以驗證非同步派發與並行限制。
 /// </summary>
 internal sealed class AsyncOnlyGateStream : Stream
 {
@@ -78,7 +75,11 @@ internal sealed class AsyncOnlyGateStream : Stream
         return gate;
     }
 
-    /// <summary>Configures the next async read to throw after the given number of bytes.</summary>
+    /// <summary>
+
+    /// Configures the next async read to throw after the given number of bytes.
+
+    /// </summary>
     public void ThrowAfterByteOnRead(int byteCount)
     {
         _throwAfterByteOnRead = true;
@@ -214,9 +215,7 @@ internal sealed class AsyncOnlyGateStream : Stream
 }
 
 /// <summary>
-/// Seekable file-like stream whose only difference from <see cref="MemoryStream"/> is that
-/// synchronous <see cref="Read"/>/<see cref="Write"/> fail while async overrides complete
-/// immediately. Used to validate the writer's async path without <see cref="Thread.Sleep"/>.
+/// 可搜尋但僅允許非同步操作的測試串流，拒絕同步 Read/Write。
 /// </summary>
 internal sealed class SeekableAsyncOnlyStream : Stream
 {
@@ -226,33 +225,66 @@ internal sealed class SeekableAsyncOnlyStream : Stream
     private long _asyncReadCalls;
     private long _asyncWriteCalls;
 
+    /// <summary>
+
+    /// 初始化新實例。
+
+    /// </summary>
     public SeekableAsyncOnlyStream() { _inner = new MemoryStream(); }
+    /// <summary>
+    /// 使用初始位元組資料初始化新實例。
+    /// </summary>
     public SeekableAsyncOnlyStream(byte[] initial) { _inner = new MemoryStream(initial); }
 
+    /// <summary>
+
+    /// 同步讀取呼叫數。
+
+    /// </summary>
     public long SyncReadCalls => _syncReadCalls;
+    /// <summary>
+    /// 同步寫入呼叫數。
+    /// </summary>
     public long SyncWriteCalls => _syncWriteCalls;
+    /// <summary>
+    /// 非同步讀取呼叫數。
+    /// </summary>
     public long AsyncReadCalls => _asyncReadCalls;
+    /// <summary>
+    /// 非同步寫入呼叫數。
+    /// </summary>
     public long AsyncWriteCalls => _asyncWriteCalls;
+    /// <summary>
+    /// 轉為位元組陣列。
+    /// </summary>
     public byte[] ToArray() => _inner.ToArray();
 
+    /// <inheritdoc/>
     public override bool CanRead => true;
+    /// <inheritdoc/>
     public override bool CanSeek => true;
+    /// <inheritdoc/>
     public override bool CanWrite => true;
+    /// <inheritdoc/>
     public override long Length => _inner.Length;
+    /// <inheritdoc/>
     public override long Position { get => _inner.Position; set => _inner.Position = value; }
 
+    /// <inheritdoc/>
     public override int Read(byte[] buffer, int offset, int count)
     {
         _syncReadCalls++;
         throw new InvalidOperationException("SeekableAsyncOnlyStream rejects synchronous reads.");
     }
 
+    /// <inheritdoc/>
     public override void Write(byte[] buffer, int offset, int count)
     {
         _syncWriteCalls++;
         throw new InvalidOperationException("SeekableAsyncOnlyStream rejects synchronous writes.");
     }
 
+    /// <inheritdoc/>
     public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
     {
         _asyncReadCalls++;
@@ -260,6 +292,7 @@ internal sealed class SeekableAsyncOnlyStream : Stream
         return Task.FromResult(count);
     }
 
+    /// <inheritdoc/>
     public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
     {
         _asyncWriteCalls++;
@@ -267,14 +300,16 @@ internal sealed class SeekableAsyncOnlyStream : Stream
         return Task.CompletedTask;
     }
 
+    /// <inheritdoc/>
     public override void Flush() { }
+    /// <inheritdoc/>
     public override long Seek(long offset, SeekOrigin origin) => _inner.Seek(offset, origin);
+    /// <inheritdoc/>
     public override void SetLength(long value) => _inner.SetLength(value);
 }
 
 /// <summary>
-/// Writable non-seekable stream whose synchronous <see cref="Write"/> fails while async
-/// writes complete immediately. Used to exercise the fragmented non-seekable output path.
+/// 不可搜尋但可非同步寫入的測試串流，用於測試 Fragmented 模式的順序寫入路徑。
 /// </summary>
 internal sealed class NonSeekableAsyncWriteStream : Stream
 {

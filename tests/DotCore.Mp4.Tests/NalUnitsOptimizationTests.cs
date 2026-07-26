@@ -5,8 +5,9 @@ using System.Text;
 using DotCore.Mp4;
 using Xunit;
 
-namespace DotCore.Mp4.Tests;
-
+/// <summary>
+/// NAL 單元解析與記憶體配置最佳化測試套件。
+/// </summary>
 public sealed class NalUnitsOptimizationTests
 {
     [Fact]

@@ -6,8 +6,9 @@ using System.Text;
 using DotCore.Mp4;
 using Xunit;
 
-namespace DotCore.Mp4.Tests;
-
+/// <summary>
+/// Fragmented MP4 Reader 預設模式與相容性整合測試套件。
+/// </summary>
 public sealed class FragmentedReaderDefaultIntegrationTests
 {
     private const uint DefaultBaseIsMoof = 0x020000;

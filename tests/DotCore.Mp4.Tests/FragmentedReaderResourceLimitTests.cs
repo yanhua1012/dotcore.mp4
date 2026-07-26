@@ -6,8 +6,9 @@ using System.Text;
 using DotCore.Mp4;
 using Xunit;
 
-namespace DotCore.Mp4.Tests;
-
+/// <summary>
+/// Fragmented MP4 Reader 資源限制與異常控制測試套件。
+/// </summary>
 public sealed class FragmentedReaderResourceLimitTests
 {
     [Fact]

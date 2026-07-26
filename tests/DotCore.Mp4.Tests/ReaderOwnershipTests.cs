@@ -2,8 +2,9 @@ using System.Reflection;
 using DotCore.Mp4;
 using Xunit;
 
-namespace DotCore.Mp4.Tests;
-
+/// <summary>
+/// Reader 樣本記憶體所有權轉移與生命週期測試套件。
+/// </summary>
 public sealed class ReaderOwnershipTests
 {
     [Fact]

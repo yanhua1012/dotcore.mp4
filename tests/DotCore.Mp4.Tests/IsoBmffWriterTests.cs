@@ -2,8 +2,9 @@ using System.IO;
 using DotCore.Mp4;
 using Xunit;
 
-namespace DotCore.Mp4.Tests;
-
+/// <summary>
+/// ISO BMFF 原始寫入器層級與 Big-Endian 端序測試套件。
+/// </summary>
 public sealed class IsoBmffWriterTests
 {
     [Fact]

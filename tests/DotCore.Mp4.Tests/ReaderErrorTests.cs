@@ -4,8 +4,9 @@ using System.Linq;
 using DotCore.Mp4;
 using Xunit;
 
-namespace DotCore.Mp4.Tests;
-
+/// <summary>
+/// MP4 讀取器格式錯誤與例外處理測試套件。
+/// </summary>
 public sealed class ReaderErrorTests
 {
     [Fact]

@@ -7,53 +7,146 @@ using DotCore.Mp4;
 
 namespace DotCore.Mp4.Benchmarks;
 
+/// <summary>
+/// 相容性基線資料模型。
+/// </summary>
 internal sealed class CompatibilityBaseline
 {
+    /// <summary>
+    /// Schema 版本。
+    /// </summary>
     public int SchemaVersion { get; set; } = 1;
+    /// <summary>
+    /// 目標框架名稱。
+    /// </summary>
     public string TargetFramework { get; set; } = string.Empty;
+    /// <summary>
+    /// 明確生產 Package 依賴項目列表。
+    /// </summary>
     public List<PackageReferenceBaseline> ExplicitProductionPackages { get; set; } = new();
+    /// <summary>
+    /// 公開 API 簽章列表。
+    /// </summary>
     public List<string> PublicApi { get; set; } = new();
 }
 
+/// <summary>
+/// Package 參考基線模型。
+/// </summary>
 internal sealed class PackageReferenceBaseline
 {
+    /// <summary>
+    /// 套件名稱。
+    /// </summary>
     public string Include { get; set; } = string.Empty;
+    /// <summary>
+    /// 套件版本。
+    /// </summary>
     public string Version { get; set; } = string.Empty;
+    /// <summary>
+    /// 私有資產設定。
+    /// </summary>
     public string PrivateAssets { get; set; } = string.Empty;
 }
 
+/// <summary>
+/// 固定輸出基線模型。
+/// </summary>
 internal sealed class FixedOutputBaseline
 {
+    /// <summary>
+    /// Schema 版本。
+    /// </summary>
     public int SchemaVersion { get; set; } = 1;
+    /// <summary>
+    /// 固定輸出案例集合。
+    /// </summary>
     public List<FixedOutputCase> Outputs { get; set; } = new();
 }
 
+/// <summary>
+/// 固定輸出測試案例資料模型。
+/// </summary>
 internal sealed class FixedOutputCase
 {
+    /// <summary>
+    /// 案例識別碼。
+    /// </summary>
     public string Identity { get; set; } = string.Empty;
+    /// <summary>
+    /// 檔案長度 (位元組)。
+    /// </summary>
     public int Length { get; set; }
+    /// <summary>
+    /// 檔案 SHA-256 Hash。
+    /// </summary>
     public string Sha256 { get; set; } = string.Empty;
+    /// <summary>
+    /// 頂層 Box 摘要列表。
+    /// </summary>
     public List<BoxSummary> TopLevelBoxes { get; set; } = new();
+    /// <summary>
+    /// 序列化的視訊組態。
+    /// </summary>
     public string VideoConfiguration { get; set; } = string.Empty;
+    /// <summary>
+    /// 序列化的音訊組態。
+    /// </summary>
     public string AudioConfiguration { get; set; } = string.Empty;
+    /// <summary>
+    /// 視訊樣本摘要列表。
+    /// </summary>
     public List<string> VideoSamples { get; set; } = new();
+    /// <summary>
+    /// 音訊樣本摘要列表。
+    /// </summary>
     public List<string> AudioSamples { get; set; } = new();
+    /// <summary>
+    /// 事件順序列表。
+    /// </summary>
     public List<string> EventOrder { get; set; } = new();
 }
 
+/// <summary>
+/// Box 結構摘要。
+/// </summary>
 internal sealed class BoxSummary
 {
+    /// <summary>
+    /// Box 類型 (FourCC)。
+    /// </summary>
     public string Type { get; set; } = string.Empty;
+    /// <summary>
+    /// Box 總大小。
+    /// </summary>
     public int Size { get; set; }
+    /// <summary>
+    /// Payload 長度。
+    /// </summary>
     public int PayloadLength { get; set; }
+    /// <summary>
+    /// Payload SHA-256 Hash。
+    /// </summary>
     public string PayloadSha256 { get; set; } = string.Empty;
 }
 
+/// <summary>
+/// 提供擷取專案相容性與固定輸出基線的工具類別。
+/// </summary>
 internal static class CompatibilityBaselines
 {
+    /// <summary>
+    /// 相容性檔案名稱。
+    /// </summary>
     public const string CompatibilityFileName = "compatibility.json";
+    /// <summary>
+    /// 固定輸出檔案名稱。
+    /// </summary>
     public const string FixedOutputsFileName = "fixed-outputs.json";
 
+    /// <summary>
+    /// 擷取目前專案的 TargetFramework、Package 依賴與公開 API 相容性基線。
+    /// </summary>
     public static CompatibilityBaseline CaptureCompatibility(string repositoryRoot)
     {
         var projectPath = Path.Combine(repositoryRoot, "src", "DotCore.Mp4", "DotCore.Mp4.csproj");
@@ -81,6 +174,9 @@ internal static class CompatibilityBaselines
         };
     }
 
+    /// <summary>
+    /// 擷取各編解碼器與輸出模式組合的固定 MP4 二進位輸出結果基線。
+    /// </summary>
     public static FixedOutputBaseline CaptureFixedOutputs()
     {
         var result = new FixedOutputBaseline();

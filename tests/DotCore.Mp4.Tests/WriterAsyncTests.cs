@@ -7,8 +7,9 @@ using System.Threading.Tasks;
 using DotCore.Mp4;
 using Xunit;
 
-namespace DotCore.Mp4.Tests;
-
+/// <summary>
+/// Writer 非同步 API 功能測試套件。
+/// </summary>
 public sealed class WriterAsyncTests
 {
     [Fact]

@@ -6,8 +6,9 @@ using System.Text;
 using DotCore.Mp4;
 using Xunit;
 
-namespace DotCore.Mp4.Tests;
-
+/// <summary>
+/// FastStart 模式寫入器與 Offset 校正測試套件。
+/// </summary>
 public sealed class FastStartWriterTests
 {
     [Fact]

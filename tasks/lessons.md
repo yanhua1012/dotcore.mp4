@@ -87,3 +87,14 @@
 - Detection signal：`rg -c` 的逐檔結果經 `awk` 加總後與工作紀錄不一致。
 - Prevention rule：跨多檔案的 requirement/scenario 總數必須在寫入 scorecard 前，以逐檔機器計數後明確加總。
 - Tripwire：執行 `rg -c '^### Requirement:' ... | awk -F: '{s+=$2} END {print s}'` 與對應 scenario 命令，並將輸出直接作為報告來源。
+
+## 2026-07-26 — XML Documentation summary tags must be formatted as multi-line
+
+- 分類：documentation standard。
+- Failure mode：將單行 XML documentation summary 標籤（如 `/// <summary>...</summary>`）寫在同一行，不符合專案的多行 XML doc 格式標準。
+- Detection signal：`/// <summary> text </summary>` 存在於單一行中。
+- Prevention rule：所有 XML doc `<summary>` 標籤，不論內容長短，皆須獨立換行寫成多行格式：
+  /// <summary>
+  /// 說明內容。
+  /// </summary>
+- Tripwire：撰寫或修改 XML doc 註解後，用 `rg '/// <summary>.+</summary>'` 檢視確保無單行 summary 殘留。

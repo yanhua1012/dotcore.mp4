@@ -1,3 +1,106 @@
+# 2026-07-26 Add zh-TW Documentation Comments to Console, Benchmarks, IntegrationTests, and Tests Projects
+
+## Acceptance criteria
+
+- [x] Add zh-TW XML documentation and code comments to all `.cs` files in `samples/DotCore.Mp4.Console/`.
+- [x] Add zh-TW XML documentation and code comments to all `.cs` files in `benchmarks/DotCore.Mp4.Benchmarks/`.
+- [x] Add zh-TW XML documentation and code comments to all `.cs` files in `tests/DotCore.Mp4.IntegrationTests/`.
+- [x] Add zh-TW XML documentation and code comments to all `.cs` files in `tests/DotCore.Mp4.Tests/`.
+- [x] Maintain multi-line summary tag standard (`/// <summary>\n/// ...\n/// </summary>`).
+- [x] `dotnet build` passes with 0 Warnings and 0 Errors.
+- [x] `dotnet test` passes all 232 tests (183 unit + 49 integration, 0 failed, 0 skipped).
+- [x] `git diff --check` and `git diff --cached --check` pass with exit 0.
+
+## Checkpoints
+
+- [x] A — Update `tasks/todo.md` checklist.
+- [x] B — Add zh-TW doc comments to `samples/DotCore.Mp4.Console/Program.cs`.
+- [x] C — Add zh-TW doc comments to `benchmarks/DotCore.Mp4.Benchmarks/*.cs`.
+- [x] D — Add zh-TW doc comments to `tests/DotCore.Mp4.IntegrationTests/*.cs`.
+- [x] E — Add zh-TW doc comments to `tests/DotCore.Mp4.Tests/*.cs`.
+- [x] F — Verification via build, test, git diff --check, and task update.
+
+## Risk and rollback
+
+- Risk level: low (Comment additions only, no logic or code structure changes).
+- Affected files: `samples/DotCore.Mp4.Console/*.cs`, `benchmarks/DotCore.Mp4.Benchmarks/*.cs`, `tests/DotCore.Mp4.IntegrationTests/*.cs`, `tests/DotCore.Mp4.Tests/*.cs`.
+- Rollback: `git checkout -- samples/ benchmarks/ tests/`.
+
+## Results
+
+- Added Traditional Chinese (`zh-TW`) XML documentation and comments across all `.cs` files in `samples/DotCore.Mp4.Console/`, `benchmarks/DotCore.Mp4.Benchmarks/`, `tests/DotCore.Mp4.IntegrationTests/`, and `tests/DotCore.Mp4.Tests/`.
+- Reformatted all single-line `<summary>` tags to standard multi-line `<summary>` tags (`/// <summary>\n/// ...\n/// </summary>`).
+- Verified zero single-line summary tags remain across the entire codebase (`grep_search`).
+- `dotnet build DotCore.Mp4.sln`: Succeeded with 0 Warnings and 0 Errors.
+- `dotnet test DotCore.Mp4.sln`: Succeeded with 232 total passing tests (183 unit tests + 49 integration tests, 0 failed, 0 skipped).
+- `git diff --check` and `git diff --cached --check`: Passed with exit 0 (no trailing whitespace or whitespace errors).
+
+# 2026-07-26 Format XML Documentation Summary Tags as Multi-line
+
+## Acceptance criteria
+
+- [x] All single-line summary tags (`/// <summary>...</summary>`) in `src/DotCore.Mp4/*.cs` are reformatted to multi-line `<summary>` tags.
+- [x] Record lessons learned in `tasks/lessons.md`.
+- [x] Build with 0 warnings and 0 errors.
+- [x] Pass all unit and integration tests (232 total: 183 unit + 49 integration, 0 failed, 0 skipped).
+- [x] Clean `git diff --check` and `git diff --cached --check`.
+
+## Checkpoints
+
+- [x] A — Added lesson learned to `tasks/lessons.md`.
+- [x] B — Reformatted single-line summary tags to multi-line in `MediaContracts.cs`, `Mp4Exceptions.cs`, `Mp4Reader.cs`, `Mp4Writer.cs`, and `Mp4WriterOptions.cs`.
+- [x] C — Verified zero single-line summary tags remain in `src/DotCore.Mp4` using `grep_search`.
+- [x] D — Full build, test, and git diff verification passed.
+
+## Risk and rollback
+
+- Risk level: low (Formatting-only change, zero binary logic changes).
+- Affected files: `tasks/lessons.md`, `src/DotCore.Mp4/*.cs`.
+- Rollback: `git checkout -- src/DotCore.Mp4/ tasks/lessons.md`.
+
+## Results
+
+- Reformatted all single-line summary tags across `src/DotCore.Mp4/*.cs` (`MediaContracts.cs`, `Mp4Exceptions.cs`, `Mp4Reader.cs`, `Mp4Writer.cs`, `Mp4WriterOptions.cs`) into standard multi-line `<summary>` tags:
+  ```csharp
+  /// <summary>
+  /// ...
+  /// </summary>
+  ```
+- Confirmed zero single-line summary tags remain in `src/DotCore.Mp4` via regex search `/// <summary>[^<\n]+</summary>`.
+- Updated `tasks/lessons.md` with XML doc multi-line summary tag formatting standard, failure mode, detection signal, prevention rule, and tripwire.
+- Verification: `dotnet build` succeeded with 0 Warnings and 0 Errors; `dotnet test` passed 183 unit tests and 49 integration tests (232 total passed, 0 failed, 0 skipped); `git diff --check` and `git diff --cached --check` returned zero errors.
+
+# 2026-07-26 Implement `complete-public-api-xml-docs`
+
+## Acceptance criteria
+
+- [x] Update `openspec/config.yaml` rules to mandate zh-TW XML Documentation and VS IntelliSense tag standard.
+- [x] Complete XML doc comments for all public types, constructors, properties, methods, events, and enum values across `MediaContracts.cs`, `Mp4Exceptions.cs`, `Mp4Reader.cs`, `Mp4Writer.cs`, and `Mp4WriterOptions.cs`.
+- [x] Build with 0 warnings, 0 errors.
+- [x] Pass all unit and integration tests (0 failed, 0 skipped).
+- [x] Clean `git diff --check`.
+
+## Checkpoints
+
+- [x] A — Update `openspec/config.yaml` rules.
+- [x] B — Complete XML Doc comments in `MediaContracts.cs` and `Mp4Exceptions.cs`.
+- [x] C — Complete XML Doc comments in `Mp4Reader.cs`, `Mp4Writer.cs`, and `Mp4WriterOptions.cs`.
+- [x] D — Verification via build, test, git diff --check, and task update.
+
+## Risk and rollback
+
+- Risk level: low (XML doc comment modifications only, zero binary logic changes).
+- Affected files: `openspec/config.yaml`, `src/DotCore.Mp4/*.cs`.
+- Rollback: `git checkout -- src/DotCore.Mp4/ openspec/config.yaml`.
+
+## Results
+
+- `openspec/config.yaml`: Updated rules to mandate zh-TW XML Doc comments and standard Visual Studio IntelliSense tags (<summary>, <param>, <returns>, <exception>, <see cref="...">, <paramref name="...">).
+- `MediaContracts.cs`: Added standard zh-TW XML Doc comments to `VideoCodec`, `VideoCodecConfiguration` (including constructors, `CreateH264`/`CreateH265` factories, and properties), `EncodedVideoNalUnit`, `EncodedAudioSample`, `VideoNalUnitReadEventArgs`, and `AacSampleReadEventArgs`.
+- `Mp4Exceptions.cs`: Added standard zh-TW XML Doc comments to `Mp4FormatException` and `Mp4TimestampException` and their overloaded constructors.
+- `Mp4Reader.cs` & `Mp4Writer.cs`: Added standard zh-TW XML Doc comments to `Mp4Reader` and `Mp4Writer` classes, constructors, properties, configuration methods, read/write methods, finalization methods, and `Dispose`.
+- Verification: `dotnet build` succeeded with 0 Warnings and 0 Errors; `dotnet test` passed 183 unit tests and 49 integration tests (232 total passed, 0 failed, 0 skipped); `git diff --check` and `git diff --cached --check` returned zero errors.
+
 # 2026-07-26 Resolve CRITICAL findings for `add-mp4-async-io`
 
 ## Acceptance criteria

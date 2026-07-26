@@ -7,9 +7,14 @@ using Xunit;
 
 namespace DotCore.Mp4.IntegrationTests;
 
+/// <summary>
+/// 控制台範例專案整合與冒煙測試套件。
+/// </summary>
 public sealed class ConsoleSmokeTests
 {
-    [Theory]
+    /// <summary>
+    /// 驗證控制台程式寫入、重新開啟、訂閱事件並輸出定時樣本資訊。
+    /// </summary>
     [InlineData(null, null, "progressive", VideoCodec.H264)]
     [InlineData("progressive", "h264", "progressive", VideoCodec.H264)]
     [InlineData("faststart", "h264", "faststart", VideoCodec.H264)]

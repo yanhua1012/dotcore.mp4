@@ -10,10 +10,7 @@ using Xunit;
 namespace DotCore.Mp4.Tests;
 
 /// <summary>
-/// Full parity matrix across both codecs and all three layouts: pure sync, pure async
-/// and sequential mixed sync/async ingestion must produce byte-identical MP4 output and
-/// identical Reader round-trips. Expands the prior progressive-AAC-only mixed parity test
-/// to H.264/H.265 × progressive/faststart/fragmented.
+/// 同步與非同步 MP4 寫入二進位一致性 (Parity) 矩陣測試套件。
 /// </summary>
 public sealed class WriterAsyncParityMatrixTests
 {

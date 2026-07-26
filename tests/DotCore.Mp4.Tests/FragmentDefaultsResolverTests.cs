@@ -1,8 +1,9 @@
 using DotCore.Mp4;
 using Xunit;
 
-namespace DotCore.Mp4.Tests;
-
+/// <summary>
+/// Movie Fragment 預設值解析器測試套件。
+/// </summary>
 public sealed class FragmentDefaultsResolverTests
 {
     [Fact]

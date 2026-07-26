@@ -4,6 +4,9 @@ using DotCore.Mp4;
 
 namespace DotCore.Mp4.Benchmarks;
 
+/// <summary>
+/// BenchmarkDotNet 同步效能與記憶體配置測試類別。
+/// </summary>
 [MemoryDiagnoser]
 [Orderer(SummaryOrderPolicy.Method, MethodOrderPolicy.Declared)]
 public sealed class Mp4Benchmarks
@@ -16,11 +19,26 @@ public sealed class Mp4Benchmarks
     private IReadOnlyList<EncodedAudioSample> _audioSamples = Array.Empty<EncodedAudioSample>();
     private long _eventPayloadBytes;
 
+    /// <summary>
+
+    /// 取得或設定要測試的情境。
+
+    /// </summary>
     [ParamsSource(nameof(ScenarioValues))]
     public BenchmarkScenario Scenario { get; set; } = null!;
 
+    /// <summary>
+
+    /// 取得用於 BenchmarkDotNet 的情境來源集合。
+
+    /// </summary>
     public IEnumerable<BenchmarkScenario> ScenarioValues => FixedFixtureMatrix.Scenarios;
 
+    /// <summary>
+
+    /// 全域初始化設定。
+
+    /// </summary>
     [GlobalSetup]
     public void GlobalSetup()
     {
@@ -36,6 +54,11 @@ public sealed class Mp4Benchmarks
         }
     }
 
+    /// <summary>
+
+    /// 單次迭代理論初始化準備工作。
+
+    /// </summary>
     [IterationSetup]
     public void IterationSetup()
     {
@@ -85,6 +108,11 @@ public sealed class Mp4Benchmarks
         }
     }
 
+    /// <summary>
+
+    /// 執行同步基準測試操作。
+
+    /// </summary>
     [Benchmark]
     public long Execute()
     {
@@ -119,12 +147,25 @@ public sealed class Mp4Benchmarks
         }
     }
 
+    /// <summary>
+
+    /// 單次迭代清理工作。
+
+    /// </summary>
     [IterationCleanup]
     public void IterationCleanup() => DisposeIteration();
 
+    /// <summary>
+
+    /// 全域清理工作。
+
+    /// </summary>
     [GlobalCleanup]
     public void GlobalCleanup() => DisposeIteration();
 
+    /// <summary>
+    /// 測量指定情境的串流呼叫與數據傳輸診斷資訊。
+    /// </summary>
     internal static StreamDiagnostics MeasureStreamDiagnostics(BenchmarkScenario scenario)
     {
         var benchmark = new Mp4Benchmarks { Scenario = scenario };

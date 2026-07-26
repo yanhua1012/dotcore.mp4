@@ -7,7 +7,9 @@ using System.Threading.Tasks;
 
 namespace DotCore.Mp4;
 
-/// <summary>Reads supported MP4 tracks and synchronously emits timed media events.</summary>
+/// <summary>
+/// 讀取受支援的 MP4 軌道（H.264、H.265 與 AAC），並同步引發定時媒體事件與列舉樣本。
+/// </summary>
 public sealed class Mp4Reader : IDisposable
 {
     internal const long MaximumInputBytes = 256L * 1024 * 1024;
@@ -27,6 +29,14 @@ public sealed class Mp4Reader : IDisposable
     private ParsedTrack? _audioTrack;
     private bool _disposed;
 
+    /// <summary>
+    /// 使用指定的輸入串流與串流保持開啟選項初始化 <see cref="Mp4Reader"/> 類別的新實例。
+    /// </summary>
+    /// <param name="input">包含 MP4 內容的可讀且可搜尋串流。</param>
+    /// <param name="leaveOpen">若為 <see langword="true"/>，則在釋放讀取器時保持 <paramref name="input"/> 串流開啟；否則為 <see langword="false"/>（預設為 <see langword="true"/>）。</param>
+    /// <exception cref="ArgumentNullException">當 <paramref name="input"/> 為 null 時擲出。</exception>
+    /// <exception cref="InvalidOperationException">當 <paramref name="input"/> 不可讀取或不可搜尋時擲出。</exception>
+    /// <exception cref="Mp4FormatException">當 MP4 串流長度超出限制、格式不符合規範或不包含受支援的軌道時擲出。</exception>
     public Mp4Reader(Stream input, bool leaveOpen = true)
     {
         if (input == null) throw new ArgumentNullException(nameof(input));
@@ -41,7 +51,9 @@ public sealed class Mp4Reader : IDisposable
         InitializeFromSnapshot();
     }
 
-    /// <summary>以非同步 snapshot 建立 <see cref="Mp4Reader"/>，使用 caller stream 的可取消 <see cref="Stream.ReadAsync(byte[], int, int, CancellationToken)"/> 讀取完整 MP4，再交由與同步 constructor 相同的同步 parser 解析。</summary>
+    /// <summary>
+    /// 以非同步 snapshot 建立 <see cref="Mp4Reader"/>，使用 caller stream 的可取消 <see cref="Stream.ReadAsync(byte[], int, int, CancellationToken)"/> 讀取完整 MP4，再交由與同步 constructor 相同的同步 parser 解析。
+    /// </summary>
     /// <param name="input">可讀、可搜尋的 caller-owned 輸入 stream；factory 在成功前不會因 <paramref name="leaveOpen"/> 為 <c>false</c> 而關閉它。</param>
     /// <param name="leaveOpen">reader 釋放時是否保持 <paramref name="input"/> 開啟。</param>
     /// <param name="cancellationToken">可取消 snapshot 讀取的 token。</param>
@@ -134,13 +146,31 @@ public sealed class Mp4Reader : IDisposable
         AudioConfiguration = _audioTrack?.AudioConfiguration;
     }
 
+    /// <summary>
+    /// 取得解析自 MP4 輸入的視訊編解碼器組態資訊；若無受支援的視訊軌道則回傳 <see langword="null"/>。
+    /// </summary>
     public VideoCodecConfiguration? VideoConfiguration { get; private set; }
+
+    /// <summary>
+    /// 取得解析自 MP4 輸入的 AAC 音訊編解碼器組態資訊；若無受支援的音訊軌道則回傳 <see langword="null"/>。
+    /// </summary>
     public AacCodecConfiguration? AudioConfiguration { get; private set; }
 
+    /// <summary>
+    /// 當讀取或列舉到視訊 NAL 單元時引發的事件。
+    /// </summary>
     public event EventHandler<VideoNalUnitReadEventArgs>? VideoNalUnitRead;
+
+    /// <summary>
+    /// 當讀取或列舉到 AAC 音訊樣本時引發的事件。
+    /// </summary>
     public event EventHandler<AacSampleReadEventArgs>? AacSampleRead;
 
-    /// <summary>Enumerates video NAL units in sample/decode order and raises one event per NAL.</summary>
+    /// <summary>
+    /// 依解碼順序列舉視訊 NAL 單元，並為每個單元引發 <see cref="VideoNalUnitRead"/> 事件。
+    /// </summary>
+    /// <returns>可列舉的已編碼視訊 NAL 單元集合。</returns>
+    /// <exception cref="ObjectDisposedException">當讀取器已被釋放時擲出。</exception>
     public IEnumerable<EncodedVideoNalUnit> ReadVideoNalUnits()
     {
         EnsureReadable();
@@ -156,9 +186,17 @@ public sealed class Mp4Reader : IDisposable
         }
     }
 
+    /// <summary>
+    /// 依解碼順序列舉視訊 NAL 單元的別名方法。
+    /// </summary>
+    /// <returns>可列舉的已編碼視訊 NAL 單元集合。</returns>
     public IEnumerable<EncodedVideoNalUnit> EnumerateVideoNalUnits() => ReadVideoNalUnits();
 
-    /// <summary>Enumerates AAC access units in sample/decode order and raises one event per sample.</summary>
+    /// <summary>
+    /// 依解碼順序列舉 AAC 音訊樣本，並為每個樣本引發 <see cref="AacSampleRead"/> 事件。
+    /// </summary>
+    /// <returns>可列舉的已編碼 AAC 音訊樣本集合。</returns>
+    /// <exception cref="ObjectDisposedException">當讀取器已被釋放時擲出。</exception>
     public IEnumerable<EncodedAudioSample> ReadAudioSamples()
     {
         EnsureReadable();
@@ -171,9 +209,16 @@ public sealed class Mp4Reader : IDisposable
         }
     }
 
+    /// <summary>
+    /// 依解碼順序列舉 AAC 音訊樣本的別名方法。
+    /// </summary>
+    /// <returns>可列舉的已編碼 AAC 音訊樣本集合。</returns>
     public IEnumerable<EncodedAudioSample> EnumerateAacSamples() => ReadAudioSamples();
 
-    /// <summary>Reads both tracks in decode-time order and raises their corresponding events.</summary>
+    /// <summary>
+    /// 依解碼時間標記順序讀取所有視訊與音訊軌道，並引發對應的媒體事件。
+    /// </summary>
+    /// <exception cref="ObjectDisposedException">當讀取器已被釋放時擲出。</exception>
     public void Read()
     {
         EnsureReadable();
@@ -210,8 +255,14 @@ public sealed class Mp4Reader : IDisposable
         }
     }
 
+    /// <summary>
+    /// 依解碼時間標記順序讀取所有視訊與音訊軌道的別名方法。
+    /// </summary>
     public void ReadAll() => Read();
 
+    /// <summary>
+    /// 釋放 <see cref="Mp4Reader"/> 所使用的資源。
+    /// </summary>
     public void Dispose()
     {
         if (_disposed) return;

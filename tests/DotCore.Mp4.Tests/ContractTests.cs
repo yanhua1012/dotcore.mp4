@@ -4,8 +4,9 @@ using System.Linq;
 using DotCore.Mp4;
 using Xunit;
 
-namespace DotCore.Mp4.Tests;
-
+/// <summary>
+/// 介面契約、防禦性複製與驗證測試套件。
+/// </summary>
 public sealed class ContractTests
 {
     [Fact]
