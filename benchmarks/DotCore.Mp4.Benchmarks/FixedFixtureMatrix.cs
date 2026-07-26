@@ -265,8 +265,10 @@ internal static class FixedFixtureMatrix
             result.Add(AsyncWriter("async.writer.ingestion.progressive." + codecName + ".annexb.multi", codec, Mp4WriteMode.Progressive, VideoInputKind.AnnexB, NalShape.Multi, 8, 8));
             result.Add(AsyncWriter("async.writer.fragment-flush." + codecName + ".short-gop", codec, Mp4WriteMode.Fragmented, VideoInputKind.AnnexB, NalShape.Multi, 8, 8));
             result.Add(AsyncWriter("async.writer.finalize.faststart." + codecName + ".annexb", codec, Mp4WriteMode.FastStart, VideoInputKind.AnnexB, NalShape.Multi, 64, 8));
-            result.Add(AsyncFile("async.reader.snapshot.file." + codecName + ".large-video", codec, BenchmarkOperation.AsyncReaderSnapshot));
-            result.Add(AsyncFile("async.writer.ingestion.file.progressive." + codecName + ".annexb", codec, BenchmarkOperation.AsyncWriterIngestion));
+            result.Add(AsyncFile("async.reader.snapshot.file." + codecName + ".large-video", codec, BenchmarkOperation.AsyncReaderSnapshot, Mp4WriteMode.Progressive));
+            result.Add(AsyncFile("async.writer.ingestion.file.progressive." + codecName + ".annexb", codec, BenchmarkOperation.AsyncWriterIngestion, Mp4WriteMode.Progressive));
+            result.Add(AsyncFile("async.writer.finalize.file.faststart." + codecName + ".annexb", codec, BenchmarkOperation.AsyncFastStartFinalization, Mp4WriteMode.FastStart));
+            result.Add(AsyncFile("async.writer.fragment-flush.file.fragmented." + codecName + ".annexb", codec, BenchmarkOperation.AsyncFragmentFlush, Mp4WriteMode.Fragmented));
         }
 
         foreach (var concurrency in new[] { 1, 32, 128 })
@@ -408,14 +410,15 @@ internal static class FixedFixtureMatrix
     private static BenchmarkScenario AsyncFile(
         string id,
         VideoCodec codec,
-        BenchmarkOperation operation)
+        BenchmarkOperation operation,
+        Mp4WriteMode layout)
     {
         const int samples = 8;
         return new BenchmarkScenario(
             id,
             operation,
             codec,
-            operation == BenchmarkOperation.AsyncWriterIngestion ? Mp4WriteMode.Progressive : Mp4WriteMode.Progressive,
+            layout,
             VideoInputKind.AnnexB,
             NalShape.Multi,
             "video",

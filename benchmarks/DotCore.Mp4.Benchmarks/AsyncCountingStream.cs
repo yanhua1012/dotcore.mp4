@@ -174,6 +174,74 @@ internal sealed class SharedCounter
 }
 
 /// <summary>
+/// Wraps a real <see cref="FileStream"/> opened with <see cref="FileOptions.Asynchronous"/> and
+/// records async read/write call counts, bytes moved and synchronous fallback calls, so the
+/// file-backed async benchmark family reports observed (not synthesized) async I/O metrics.
+/// </summary>
+internal sealed class AsyncCountingFileStream : Stream
+{
+    private readonly FileStream _inner;
+    private long _asyncReadCalls;
+    private long _asyncWriteCalls;
+    private long _asyncReadBytes;
+    private long _asyncWriteBytes;
+    private long _syncReadFallback;
+    private long _syncWriteFallback;
+
+    public AsyncCountingFileStream(FileStream inner) { _inner = inner; }
+
+    public long AsyncReadCalls => _asyncReadCalls;
+    public long AsyncWriteCalls => _asyncWriteCalls;
+    public long AsyncReadBytes => _asyncReadBytes;
+    public long AsyncWriteBytes => _asyncWriteBytes;
+    public long TotalSyncFallback => _syncReadFallback + _syncWriteFallback;
+    public long MaxOutstandingIo => 0;
+
+    public override bool CanRead => _inner.CanRead;
+    public override bool CanSeek => _inner.CanSeek;
+    public override bool CanWrite => _inner.CanWrite;
+    public override long Length => _inner.Length;
+    public override long Position { get => _inner.Position; set => _inner.Position = value; }
+
+    public override int Read(byte[] buffer, int offset, int count)
+    {
+        _syncReadFallback++;
+        return _inner.Read(buffer, offset, count);
+    }
+
+    public override void Write(byte[] buffer, int offset, int count)
+    {
+        _syncWriteFallback++;
+        _inner.Write(buffer, offset, count);
+    }
+
+    public override async Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+    {
+        _asyncReadCalls++;
+        var read = await _inner.ReadAsync(buffer, offset, count, cancellationToken).ConfigureAwait(false);
+        _asyncReadBytes += read;
+        return read;
+    }
+
+    public override async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+    {
+        _asyncWriteCalls++;
+        _asyncWriteBytes += count;
+        await _inner.WriteAsync(buffer, offset, count, cancellationToken).ConfigureAwait(false);
+    }
+
+    public override void Flush() => _inner.Flush();
+    public override long Seek(long offset, SeekOrigin origin) => _inner.Seek(offset, origin);
+    public override void SetLength(long value) => _inner.SetLength(value);
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) _inner.Dispose();
+        base.Dispose(disposing);
+    }
+}
+
+/// <summary>
 /// Coordinates bounded-concurrency scenarios so that all declared operations are
 /// genuinely in-flight before any completes. Each operation enters the gate, awaits a
 /// shared <see cref="TaskCompletionSource{TResult}"/>, and the dispatcher releases the

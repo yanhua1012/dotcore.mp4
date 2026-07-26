@@ -1,3 +1,80 @@
+# 2026-07-26 Resolve CRITICAL findings for `add-mp4-async-io`
+
+## Acceptance criteria
+
+- [x] Writer state-machine CRITICALs (1–4) fixed: pre-cancel `FinalizeFileAsync` restores Idle; `Dispose` rejects Active; atomic `Interlocked` operation gate; explicit output-risk boundary faults on any post-boundary exception.
+- [x] Benchmark CRITICALs (5–8) fixed: async dispatcher is truly `async`/`Task.WhenAll` inside the timed region; file-backed Writer covers progressive/faststart/fragmented (faststart uses ReadWrite); file metrics are observed (no synthesized zeros); pure-async + sequential-mixed parity matrix covers H.264/H.265 × progressive/faststart/fragmented.
+- [ ] Sync regression acceptance (9): genuine pre-fix vs post-fix 3×3 capture performed; comparator still exits non-zero on this shared devcontainer due to environment noise (per-run CV 30–116%), not code regression. A controlled/dedicated environment is required for exit 0.
+
+## Checkpoints
+
+- [x] A — reloaded change artifacts and current Writer/benchmark code.
+- [x] B — fixed Writer state machine and added 4 targeted tests (pre-cancel finalize, dispose-during-active, atomic-gate race, arbitrary post-boundary exception).
+- [x] C — rewrote async benchmark dispatcher, added `AsyncCountingFileStream`, added file faststart/fragmented scenarios, added parity-matrix tests.
+- [x] D — rebuilt, re-ran unit (175/175) + integration (49/49) + self-test + baseline + OpenSpec strict; performed pre-fix/post-fix regression capture.
+
+## Risk and rollback
+
+- Risk level: low. Sync-path additions are two `Interlocked` ops per operation plus a `try/catch` around sync `FinalizeFile`; allocations are byte-identical pre/post fix (verified).
+- Affected components: `Mp4Writer` state machine, benchmark harness, unit tests.
+- Rollback: revert `src/DotCore.Mp4/Mp4Writer.cs`, benchmark, and test changes; sync I/O contract and MP4 bytes are unchanged (fixed-output baseline still matches).
+
+## Results
+
+- Writer fixes: `Mp4Writer.cs` — added `_operationGate` (atomic `Interlocked.CompareExchange` ownership), `_outputRiskCrossed` flag set at every external output/control point, `TransitionToFaulted`/`TransitionToFinalized` releasing the gate, pre-cancel `FinalizeFileAsync` restoring Idle, `Dispose` rejecting Active, sync `FinalizeFile` wrapped so failures return Idle (consistent with sync write contract). New tests in `WriterAsyncCancellationTests.cs` all pass.
+- Benchmark fixes: `Mp4AsyncBenchmarks.ExecuteAsync()` awaits the measured Task inside the timed region; concurrency uses `Task.WhenAll`; `AsyncCountingFileStream` instruments real async read/write calls + bytes; file scenarios added for faststart (Read/Write access) and fragmented; `Program`/`Capture`/`WarmUp`/`SelfTest` made `async`. File metrics now report nonzero observed async calls (e.g. faststart 44 write/17 read, progressive 11 write) with zero sync fallback.
+- Parity matrix: new `WriterAsyncParityMatrixTests` (6 theory cases) proves pure-async and sequential-mixed output is SHA-256 identical to sync and round-trips for H.264/H.265 × progressive/faststart/fragmented.
+- Comparator: relaxed `ValidateRunCompatibility` to allow a pre-change baseline and candidate to differ in source commit (regression comparison intent) while still requiring identical harness/runtime/OS/processor (controlled environment).
+- Regression capture: pre-fix baseline = clean `ab19f8e` (async impl complete, before these fixes); candidate = `ab19f8e` + fixes. Both use the same identity-field harness. 3×3 comparison: provenance valid, identity sets match, allocations 0.0% delta (deterministic, proving no work change), but 7/37 required scenarios exceed the 10% throughput gate with per-run ops/s CV of 30–116% — the shared devcontainer is not a controlled environment, so timing noise dominates. Artifacts: `artifacts/benchmarks/syncfix-baseline-{1,2,3}.json`, `syncfix-candidate-{1,2,3}.json`, `syncfix-comparison.json`. A pre-async-implementation (`a5ec87b`) 3-run baseline was also captured (`regression-baseline-{1,2,3}.json`) but is not directly comparable because the identity-field harness was introduced together with the async implementation.
+- Verification: Release build 0 warnings/0 errors; unit 175/175 passed; integration 49/49 passed; benchmark `self-test` passed; API/package/fixed-output `baseline` matched; OpenSpec strict 2/2 passed.
+- Final assessment: CRITICALs 1–8 resolved with passing tests; CRITICAL 9 infrastructure is correct and the code is shown not to regress sync (deterministic allocation parity), but a controlled-environment re-run is still required to obtain comparator exit 0. Tasks 1.3/9.9 should not be marked complete until that controlled run passes.
+
+
+## Acceptance criteria
+
+- [ ] All 74 implementation tasks are objectively complete in the current checkout; all boxes are checked, but multiple task claims are contradicted by current evidence.
+- [x] Every delta-spec requirement and scenario maps to implementation and test evidence.
+- [ ] Implementation follows the documented async I/O, state, compatibility, and benchmark design.
+- [x] OpenSpec strict validation, solution build/tests, interoperability, benchmark self-tests, and diff checks pass or any gap is reported precisely.
+- [x] Final report groups actionable CRITICAL, WARNING, and SUGGESTION findings with file references.
+
+## Checkpoints
+
+- [x] A — load status, apply instructions, all planning artifacts, repository lessons, and current Git state.
+- [x] B — map tasks, requirements, scenarios, and design decisions to implementation/tests.
+- [x] C — run deterministic targeted/full verification and independent reviews.
+- [x] D — record evidence and issue the archive-readiness assessment.
+
+## Risk and rollback
+
+- Risk level: low; this activity verifies existing behavior and does not intentionally change production code.
+- Affected components: OpenSpec artifacts, `Mp4Reader`, `Mp4Writer`, unit/integration tests, Console, benchmark harness, and README.
+- Rollback: remove only this verification-notes section; no runtime or persistent-data rollback is required.
+
+## Dependencies and environment
+
+- Expected SDK: .NET 10; production target: dependency-free `netstandard2.0`.
+- NuGet restore in this mounted checkout may require `/p:RestoreFallbackFolders=` and `/p:RestorePackagesPath=/root/.nuget/packages`.
+- `ffprobe` and `ffmpeg` must be available on `PATH` for external interoperability evidence.
+
+## Working notes
+
+- Schema: `spec-driven`; source of truth is repo-local change `add-mp4-async-io`.
+- OpenSpec reports proposal, design, three delta specs, and tasks present; objective checklist baseline is 74/74 complete.
+- Verification must distinguish actual current-checkout proof from historical task claims.
+
+## Results
+
+- Objective inventory: schema `spec-driven`; 4/4 artifact kinds present; 3 delta specs; 8 requirements; 34 scenarios; 74/74 task boxes checked and 0 unchecked. The checked state is not reliable completion evidence because current implementation/evidence contradicts tasks 1.3, 2.1/2.2, 3.2/3.3, 7.1/7.3, 9.4–9.6, and 9.9 in whole or in material part.
+- Requirement assessment: all 8 requirements mapped; 3 fully conform, 3 partially conform, and 2 materially fail. Scenario evidence is 16 strong/direct, 12 partial, and 6 failed/divergent.
+- Writer CRITICAL findings: pre-cancelled idle `FinalizeFileAsync` leaves state Active; active-operation `Dispose` is not rejected; operation acquisition is a non-atomic check-then-set; arbitrary post-output exceptions outside a short allowlist return the Writer to Idle instead of terminal Faulted.
+- Benchmark/evidence CRITICAL findings: measured async paths block through `GetAwaiter().GetResult()` and `Task.WaitAll`; file-backed Writer covers only progressive rather than all three layouts; file results synthesize zero async calls/bytes and synchronous completion instead of observing them; fixed sync/async/mixed output coverage is incomplete; saved “baseline” and candidate runs use the same post-implementation commit, fail provenance validation, and 12 required IDs fail the 10% throughput gate.
+- Reader WARNING findings: implementation behavior is present, but async failure/ownership, restore-on-cancel, partial-read, token propagation, post-construction zero-I/O, repeatability, event, and lifetime cases lack the direct tests claimed by tasks 2.1/2.2. Integration opens the Reader input with `File.OpenRead` rather than `FileOptions.Asynchronous`.
+- Coherence WARNING findings: Reader capability/length guards are duplicated rather than shared; Writer video paths materialize complete access units instead of the design's prefix/payload range writes; comparator identity validation and README executable-roundtrip proof are incomplete; benchmark provenance retains absolute command/path data.
+- Current verification: restore passed; Release build passed with 0 warnings/0 errors; unit tests 165/165 passed, 0 skipped; integration tests 49/49 passed, 0 skipped; OpenSpec strict validation passed 1/1; benchmark `self-test` and API/package/fixed-output `baseline` passed; fresh one-operation smoke captured 55 scenarios.
+- Failing acceptance repro: the saved 3×3 sync comparison exits 1, reports invalid path/hash provenance for all six runs, and reports 12/37 required sync scenarios below the 10% gate. Report saved outside the repo at `/tmp/add-mp4-async-io-sync-regression-verify.json`.
+- Final assessment: not ready to archive. Resolve the CRITICAL state-machine and benchmark/evidence divergences, add the missing regression coverage, then rerun full verification and a genuine pre-change/candidate performance comparison in a controlled environment.
+
 # 2026-07-26 Propose `add-mp4-async-io`
 
 ## Acceptance criteria

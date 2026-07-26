@@ -26,6 +26,8 @@ public sealed class Mp4Writer : IDisposable
     private VideoCodecConfiguration? _videoConfiguration;
     private AacCodecConfiguration? _audioConfiguration;
     private WriterState _state = WriterState.Idle;
+    private int _operationGate; // 0 = no active operation held, 1 = active operation held (atomic ownership)
+    private bool _outputRiskCrossed; // true once an async operation crosses the output-risk boundary
     private bool _disposed;
     private bool _fragmentedStarted;
     private bool _fragmentedHasVideoSample;
@@ -398,14 +400,14 @@ public sealed class Mp4Writer : IDisposable
             _pendingVideo = new PendingVideoAccessUnit(pts, dts, duration, sample.IsKeyFrame, nalUnits);
             ExitOperationToIdleOnSyncFailure();
         }
-        catch (OperationCanceledException) when (_state == WriterState.Active)
+        catch (OperationCanceledException) when (_state == WriterState.Active && _outputRiskCrossed)
         {
-            _state = WriterState.Faulted;
+            TransitionToFaulted();
             throw;
         }
-        catch (Exception error) when (_state == WriterState.Active && IsOutputRiskFailure(error))
+        catch (Exception error) when (_state == WriterState.Active && (_outputRiskCrossed || IsOutputRiskFailure(error)))
         {
-            _state = WriterState.Faulted;
+            TransitionToFaulted();
             throw;
         }
         catch
@@ -454,18 +456,19 @@ public sealed class Mp4Writer : IDisposable
 
             _lastAudioDts = dts;
             var offset = _output.Position;
+            MarkOutputRiskCrossed();
             await _output.WriteAsync(sample.DataBytes, 0, sample.DataBytes.Length, cancellationToken).ConfigureAwait(false);
             _audioSamples.Add(new Mp4Sample(offset, sample.DataBytes.Length, pts, dts, duration, true));
             ExitOperationToIdleOnSyncFailure();
         }
-        catch (OperationCanceledException) when (_state == WriterState.Active)
+        catch (OperationCanceledException) when (_state == WriterState.Active && _outputRiskCrossed)
         {
-            _state = WriterState.Faulted;
+            TransitionToFaulted();
             throw;
         }
-        catch (Exception error) when (_state == WriterState.Active && IsOutputRiskFailure(error))
+        catch (Exception error) when (_state == WriterState.Active && (_outputRiskCrossed || IsOutputRiskFailure(error)))
         {
-            _state = WriterState.Faulted;
+            TransitionToFaulted();
             throw;
         }
         catch
@@ -526,6 +529,7 @@ public sealed class Mp4Writer : IDisposable
             throw new Mp4FormatException("A video access unit has an unsupported MP4 sample size.");
         }
 
+        MarkOutputRiskCrossed();
         await _output.WriteAsync(buffer, 0, buffer.Length, cancellationToken).ConfigureAwait(false);
         _videoSamples.Add(new Mp4Sample(
             offset,
@@ -585,6 +589,7 @@ public sealed class Mp4Writer : IDisposable
         }
 
         var moof = BuildMovieFragment(video, audio, videoPayloadBytes);
+        MarkOutputRiskCrossed();
         await _output.WriteAsync(moof.Buffer, 0, moof.Count, cancellationToken).ConfigureAwait(false);
         var mdatHeader = new byte[8];
         mdatHeader[0] = (byte)((mdatSize >> 24) & 0xFF);
@@ -637,6 +642,7 @@ public sealed class Mp4Writer : IDisposable
         const int relocationBufferBytes = 64 * 1024;
         var moov = FastStartLayout.BuildStableMovieBox(BuildMovieBox);
         var destinationEnd = checked(endOfMdat + moov.LongLength);
+        MarkOutputRiskCrossed();
         _output.SetLength(destinationEnd);
         var buffer = new byte[relocationBufferBytes];
         var sourceEnd = endOfMdat;
@@ -692,50 +698,55 @@ public sealed class Mp4Writer : IDisposable
     {
         EnterFinalize();
         if (_state == WriterState.Finalized) return;
-
-        if (_mode == Mp4WriteMode.Fragmented)
+        try
         {
-            CommitPendingFragmentedVideo();
-            if (!_fragmentedHasVideoSample)
+            if (_mode == Mp4WriteMode.Fragmented)
             {
-                _state = WriterState.Idle;
-                throw new InvalidOperationException("Fragmented MP4 output requires at least one video sample.");
+                CommitPendingFragmentedVideo();
+                if (!_fragmentedHasVideoSample)
+                {
+                    throw new InvalidOperationException("Fragmented MP4 output requires at least one video sample.");
+                }
+
+                FlushFragment(null);
+                TransitionToFinalized();
+                return;
             }
 
-            FlushFragment(null);
-            _state = WriterState.Finalized;
-            return;
-        }
+            FlushPendingVideo();
+            if (_videoSamples.Count == 0 && _audioSamples.Count == 0)
+            {
+                throw new InvalidOperationException("At least one video or AAC sample is required before finalization.");
+            }
 
-        FlushPendingVideo();
-        if (_videoSamples.Count == 0 && _audioSamples.Count == 0)
+            var endOfMdat = _output.Position;
+            var mdatSize = checked((ulong)(endOfMdat - _mdatStart));
+            var restore = _output.Position;
+            _output.Seek(_mdatStart, SeekOrigin.Begin);
+            var headerWriter = new IsoBmffWriter(_output);
+            headerWriter.WriteUInt32(1);
+            headerWriter.WriteFourCc("mdat");
+            headerWriter.WriteUInt64(mdatSize);
+            _output.Seek(restore, SeekOrigin.Begin);
+
+            if (_mode == Mp4WriteMode.FastStart)
+            {
+                var moov = FastStartLayout.BuildStableMovieBox(BuildMovieBox);
+                RelocateMdatForFastStart(endOfMdat, moov);
+            }
+            else
+            {
+                var moov = BuildMovieBox(0);
+                _output.Write(moov, 0, moov.Length);
+            }
+
+            TransitionToFinalized();
+        }
+        catch
         {
-            _state = WriterState.Idle;
-            throw new InvalidOperationException("At least one video or AAC sample is required before finalization.");
+            ExitOperationToIdleOnSyncFailure();
+            throw;
         }
-
-        var endOfMdat = _output.Position;
-        var mdatSize = checked((ulong)(endOfMdat - _mdatStart));
-        var restore = _output.Position;
-        _output.Seek(_mdatStart, SeekOrigin.Begin);
-        var headerWriter = new IsoBmffWriter(_output);
-        headerWriter.WriteUInt32(1);
-        headerWriter.WriteFourCc("mdat");
-        headerWriter.WriteUInt64(mdatSize);
-        _output.Seek(restore, SeekOrigin.Begin);
-
-        if (_mode == Mp4WriteMode.FastStart)
-        {
-            var moov = FastStartLayout.BuildStableMovieBox(BuildMovieBox);
-            RelocateMdatForFastStart(endOfMdat, moov);
-        }
-        else
-        {
-            var moov = BuildMovieBox(0);
-            _output.Write(moov, 0, moov.Length);
-        }
-
-        _state = WriterState.Finalized;
     }
 
     /// <summary>以非同步方式 backpatch mdat 並附加完整的 movie metadata，使用 caller stream 的 <see cref="Stream.WriteAsync(byte[], int, int, CancellationToken)"/>。</summary>
@@ -748,7 +759,15 @@ public sealed class Mp4Writer : IDisposable
     {
         EnterFinalize();
         if (_state == WriterState.Finalized) return Task.CompletedTask;
-        cancellationToken.ThrowIfCancellationRequested();
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        catch (OperationCanceledException)
+        {
+            ExitOperationToIdleOnSyncFailure();
+            throw;
+        }
         return FinalizeFileAsyncCore(cancellationToken);
     }
 
@@ -759,18 +778,18 @@ public sealed class Mp4Writer : IDisposable
             if (_mode == Mp4WriteMode.Fragmented)
             {
                 await FinalizeFragmentedAsync(cancellationToken).ConfigureAwait(false);
-                _state = WriterState.Finalized;
+                TransitionToFinalized();
                 return;
             }
 
             await FlushPendingVideoAsync(cancellationToken).ConfigureAwait(false);
             if (_videoSamples.Count == 0 && _audioSamples.Count == 0)
             {
-                _state = WriterState.Idle;
+                ExitOperationToIdleOnSyncFailure();
                 throw new InvalidOperationException("At least one video or AAC sample is required before finalization.");
             }
 
-            await EnterOutputRiskAsync(cancellationToken).ConfigureAwait(false);
+            MarkOutputRiskCrossed();
             var endOfMdat = _output.Position;
             var mdatSize = checked((ulong)(endOfMdat - _mdatStart));
             var restore = _output.Position;
@@ -788,16 +807,21 @@ public sealed class Mp4Writer : IDisposable
                 await _output.WriteAsync(moov, 0, moov.Length, cancellationToken).ConfigureAwait(false);
             }
 
-            _state = WriterState.Finalized;
+            TransitionToFinalized();
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (_state == WriterState.Active && _outputRiskCrossed)
         {
-            _state = WriterState.Faulted;
+            TransitionToFaulted();
             throw;
         }
-        catch (Exception) when (_state == WriterState.Active)
+        catch (Exception error) when (_state == WriterState.Active && (_outputRiskCrossed || IsOutputRiskFailure(error)))
         {
-            _state = WriterState.Faulted;
+            TransitionToFaulted();
+            throw;
+        }
+        catch
+        {
+            ExitOperationToIdleOnSyncFailure();
             throw;
         }
     }
@@ -807,7 +831,7 @@ public sealed class Mp4Writer : IDisposable
         CommitPendingFragmentedVideo();
         if (!_fragmentedHasVideoSample)
         {
-            _state = WriterState.Idle;
+            ExitOperationToIdleOnSyncFailure();
             throw new InvalidOperationException("Fragmented MP4 output requires at least one video sample.");
         }
 
@@ -832,18 +856,17 @@ public sealed class Mp4Writer : IDisposable
         return buffer;
     }
 
-    private Task EnterOutputRiskAsync(CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.CompletedTask;
-    }
-
     public void Complete() => FinalizeFile();
     public void Finish() => FinalizeFile();
 
     public void Dispose()
     {
         if (_disposed) return;
+        if (_state == WriterState.Active)
+        {
+            throw new InvalidOperationException(
+                "An MP4 writer operation is in progress; await it before disposing the writer.");
+        }
         _disposed = true;
         if (!_leaveOpen)
         {
@@ -993,6 +1016,7 @@ public sealed class Mp4Writer : IDisposable
 
         var fileType = BuildBytes(WriteFileTypeBox);
         var movie = BuildFragmentedInitialMovieBox();
+        MarkOutputRiskCrossed();
         await _output.WriteAsync(fileType, 0, fileType.Length, cancellationToken).ConfigureAwait(false);
         await _output.WriteAsync(movie, 0, movie.Length, cancellationToken).ConfigureAwait(false);
         _fragmentedStarted = true;
@@ -2022,26 +2046,54 @@ public sealed class Mp4Writer : IDisposable
     private void EnterOperation()
     {
         EnsureWritable();
+        if (Interlocked.CompareExchange(ref _operationGate, 1, 0) != 0)
+        {
+            throw new InvalidOperationException("An MP4 writer operation is already in progress.");
+        }
         _state = WriterState.Active;
+        _outputRiskCrossed = false;
     }
 
     private void EnterFinalize()
     {
         ThrowIfDisposed();
         ThrowIfFaulted();
-        if (_state == WriterState.Active)
+        if (_state == WriterState.Finalized)
+        {
+            return;
+        }
+        if (Interlocked.CompareExchange(ref _operationGate, 1, 0) != 0)
         {
             throw new InvalidOperationException("An MP4 writer operation is already in progress.");
         }
-        if (_state != WriterState.Finalized)
-        {
-            _state = WriterState.Active;
-        }
+        _state = WriterState.Active;
+        _outputRiskCrossed = false;
+    }
+
+    private void MarkOutputRiskCrossed()
+    {
+        _outputRiskCrossed = true;
+    }
+
+    private void TransitionToFaulted()
+    {
+        _state = WriterState.Faulted;
+        Interlocked.Exchange(ref _operationGate, 0);
+    }
+
+    private void TransitionToFinalized()
+    {
+        _state = WriterState.Finalized;
+        Interlocked.Exchange(ref _operationGate, 0);
     }
 
     private void ExitOperationToIdleOnSyncFailure()
     {
-        if (_state == WriterState.Active) _state = WriterState.Idle;
+        if (_state == WriterState.Active)
+        {
+            _state = WriterState.Idle;
+            Interlocked.Exchange(ref _operationGate, 0);
+        }
     }
 
     private void ThrowIfCancelledPreOutput(CancellationToken cancellationToken)

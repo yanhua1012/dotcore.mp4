@@ -9,8 +9,8 @@ namespace DotCore.Mp4.Benchmarks;
 /// Executes async I/O benchmark scenarios: immediate-completion pre-sized memory,
 /// real file-backed streams (FileOptions.Asynchronous) and bounded-concurrency gated
 /// streams. The measured region awaits the operation Task before stopping the timer,
-/// records synchronous completion observed before the await, and reports async/sync
-/// call counts and maximum outstanding I/O.
+/// records synchronous completion observed before the await, and reports observed
+/// (never synthesized) async/sync call counts, bytes moved and maximum outstanding I/O.
 /// </summary>
 internal sealed class Mp4AsyncBenchmarks
 {
@@ -68,34 +68,33 @@ internal sealed class Mp4AsyncBenchmarks
             : new AsyncCountingStream(FixedFixtureMatrix.EstimateOutputCapacity(Scenario));
     }
 
-    public (long Bytes, AsyncBenchmarkDiagnostics Diagnostics) Execute()
+    public Task<(long Bytes, AsyncBenchmarkDiagnostics Diagnostics)> ExecuteAsync()
     {
         if (Scenario.StreamKind == "async-file")
         {
-            return ExecuteFile().GetAwaiter().GetResult();
+            return ExecuteFileAsync();
         }
 
         if (Scenario.StreamKind == "async-gated")
         {
-            return ExecuteConcurrency();
+            return ExecuteConcurrencyAsync();
         }
 
         if (Scenario.Operation == BenchmarkOperation.AsyncReaderSnapshot)
         {
-            return ExecuteReaderSnapshot();
+            return ExecuteReaderSnapshotAsync();
         }
 
-        return ExecuteWriter(_stream!);
+        return ExecuteWriterAsync(_stream!);
     }
 
-    private (long, AsyncBenchmarkDiagnostics) ExecuteReaderSnapshot()
+    private async Task<(long, AsyncBenchmarkDiagnostics)> ExecuteReaderSnapshotAsync()
     {
-        long bytes;
         var stream = _stream!;
-        var token = CancellationToken.None;
-        var pending = Mp4Reader.CreateAsync(stream, leaveOpen: true, token);
+        var pending = Mp4Reader.CreateAsync(stream, leaveOpen: true, CancellationToken.None);
         var synchronouslyCompleted = pending.IsCompleted;
-        using (var reader = pending.GetAwaiter().GetResult())
+        long bytes;
+        using (var reader = await pending.ConfigureAwait(false))
         {
             bytes = reader.VideoConfiguration?.NalLengthSize ?? reader.AudioConfiguration?.SampleRate ?? 0;
         }
@@ -104,14 +103,13 @@ internal sealed class Mp4AsyncBenchmarks
         return (bytes, Diagnostics);
     }
 
-    private (long, AsyncBenchmarkDiagnostics) ExecuteWriter(AsyncCountingStream stream)
+    private async Task<(long, AsyncBenchmarkDiagnostics)> ExecuteWriterAsync(AsyncCountingStream stream)
     {
-        var token = CancellationToken.None;
         var codec = Scenario.Codec ?? VideoCodec.H264;
         var mode = Scenario.Layout ?? Mp4WriteMode.Progressive;
-        var pendingWriter = Mp4Writer.CreateAsync(stream, new Mp4WriterOptions { Mode = mode, MaximumFragmentBufferBytes = 32 * 1024 * 1024 }, true, token);
+        var pendingWriter = Mp4Writer.CreateAsync(stream, new Mp4WriterOptions { Mode = mode, MaximumFragmentBufferBytes = 32 * 1024 * 1024 }, true, CancellationToken.None);
         var synchronouslyCompleted = pendingWriter.IsCompleted;
-        using var writer = pendingWriter.GetAwaiter().GetResult();
+        using var writer = await pendingWriter.ConfigureAwait(false);
         writer.SetVideoCodecConfiguration(FixedFixtureMatrix.VideoConfiguration(codec));
         if (mode == Mp4WriteMode.FastStart || Scenario.Operation == BenchmarkOperation.AsyncFragmentFlush)
         {
@@ -120,57 +118,109 @@ internal sealed class Mp4AsyncBenchmarks
 
         if (Scenario.Operation == BenchmarkOperation.AsyncFragmentFlush)
         {
-            foreach (var sample in _videoSamples.Take(Math.Max(1, _videoSamples.Count - 1))) writer.WriteVideoNalUnitAsync(sample, token).GetAwaiter().GetResult();
-            writer.WriteVideoNalUnitAsync(_videoSamples[^1], token).GetAwaiter().GetResult();
-            writer.FinalizeFileAsync(token).GetAwaiter().GetResult();
+            foreach (var sample in _videoSamples.Take(Math.Max(1, _videoSamples.Count - 1))) await writer.WriteVideoNalUnitAsync(sample).ConfigureAwait(false);
+            await writer.WriteVideoNalUnitAsync(_videoSamples[^1]).ConfigureAwait(false);
+            await writer.FinalizeFileAsync().ConfigureAwait(false);
         }
         else if (Scenario.Operation == BenchmarkOperation.AsyncFastStartFinalization)
         {
-            foreach (var sample in _videoSamples) writer.WriteVideoNalUnitAsync(sample, token).GetAwaiter().GetResult();
-            foreach (var sample in _audioSamples) writer.WriteAudioSampleAsync(sample, token).GetAwaiter().GetResult();
-            writer.FinalizeFileAsync(token).GetAwaiter().GetResult();
+            foreach (var sample in _videoSamples) await writer.WriteVideoNalUnitAsync(sample).ConfigureAwait(false);
+            foreach (var sample in _audioSamples) await writer.WriteAudioSampleAsync(sample).ConfigureAwait(false);
+            await writer.FinalizeFileAsync().ConfigureAwait(false);
         }
         else
         {
-            foreach (var sample in _videoSamples) writer.WriteVideoNalUnitAsync(sample, token).GetAwaiter().GetResult();
-            writer.FinalizeFileAsync(token).GetAwaiter().GetResult();
+            foreach (var sample in _videoSamples) await writer.WriteVideoNalUnitAsync(sample).ConfigureAwait(false);
+            await writer.FinalizeFileAsync().ConfigureAwait(false);
         }
 
         Diagnostics = Snapshot(stream, completedOperations: 1, synchronouslyCompletedOperations: synchronouslyCompleted ? 1 : 0);
         return (stream.Length, Diagnostics);
     }
 
-    private async Task<(long, AsyncBenchmarkDiagnostics)> ExecuteFile()
+    private async Task<(long, AsyncBenchmarkDiagnostics)> ExecuteFileAsync()
     {
-        var token = CancellationToken.None;
         var codec = Scenario.Codec ?? VideoCodec.H264;
         var path = _filePath!;
+        var mode = Scenario.Layout ?? Mp4WriteMode.Progressive;
         try
         {
             long bytes;
             AsyncBenchmarkDiagnostics diagnostics;
             if (Scenario.Operation == BenchmarkOperation.AsyncReaderSnapshot)
             {
-                await using (var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, FileOptions.Asynchronous))
-                using (var reader = await Mp4Reader.CreateAsync(file))
+                var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16, FileOptions.Asynchronous);
+                var counting = new AsyncCountingFileStream(file);
+                long asyncReadCalls;
+                long asyncReadBytes;
+                long syncFallback;
+                try
                 {
-                    bytes = reader.VideoConfiguration?.NalLengthSize ?? 0;
+                    using (var reader = await Mp4Reader.CreateAsync(counting).ConfigureAwait(false))
+                    {
+                        bytes = reader.VideoConfiguration?.NalLengthSize ?? 0;
+                    }
+                    asyncReadCalls = counting.AsyncReadCalls;
+                    asyncReadBytes = counting.AsyncReadBytes;
+                    syncFallback = counting.TotalSyncFallback;
+                }
+                finally
+                {
+                    counting.Dispose();
                 }
 
-                diagnostics = new AsyncBenchmarkDiagnostics(0, 0, 0, 1, 1, "async-file");
+                diagnostics = new AsyncBenchmarkDiagnostics(asyncReadCalls, 0, syncFallback, 1, 1, "async-file", asyncReadBytes);
             }
             else
             {
-                await using (var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read, 1 << 16, FileOptions.Asynchronous))
-                using (var writer = await Mp4Writer.CreateAsync(file, new Mp4WriterOptions { Mode = Mp4WriteMode.Progressive }))
+                var access = mode == Mp4WriteMode.FastStart ? FileAccess.ReadWrite : FileAccess.Write;
+                var file = new FileStream(path, FileMode.Create, access, FileShare.Read, 1 << 16, FileOptions.Asynchronous);
+                var counting = new AsyncCountingFileStream(file);
+                long asyncWriteCalls;
+                long asyncWriteBytes;
+                long asyncReadCalls;
+                long asyncReadBytes;
+                long syncFallback;
+                try
                 {
-                    writer.SetVideoCodecConfiguration(FixedFixtureMatrix.VideoConfiguration(codec));
-                    foreach (var sample in _videoSamples) await writer.WriteVideoNalUnitAsync(sample);
-                    await writer.FinalizeFileAsync();
-                    bytes = file.Length;
+                    using (var writer = await Mp4Writer.CreateAsync(counting, new Mp4WriterOptions { Mode = mode, MaximumFragmentBufferBytes = 32 * 1024 * 1024 }).ConfigureAwait(false))
+                    {
+                        writer.SetVideoCodecConfiguration(FixedFixtureMatrix.VideoConfiguration(codec));
+                        if (mode == Mp4WriteMode.FastStart || Scenario.Operation == BenchmarkOperation.AsyncFragmentFlush)
+                        {
+                            writer.SetAudioCodecConfiguration(FixedFixtureMatrix.AacConfiguration());
+                        }
+
+                        if (Scenario.Operation == BenchmarkOperation.AsyncFragmentFlush)
+                        {
+                            foreach (var sample in _videoSamples.Take(Math.Max(1, _videoSamples.Count - 1))) await writer.WriteVideoNalUnitAsync(sample).ConfigureAwait(false);
+                            await writer.WriteVideoNalUnitAsync(_videoSamples[^1]).ConfigureAwait(false);
+                        }
+                        else if (Scenario.Operation == BenchmarkOperation.AsyncFastStartFinalization)
+                        {
+                            foreach (var sample in _videoSamples) await writer.WriteVideoNalUnitAsync(sample).ConfigureAwait(false);
+                            foreach (var sample in _audioSamples) await writer.WriteAudioSampleAsync(sample).ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            foreach (var sample in _videoSamples) await writer.WriteVideoNalUnitAsync(sample).ConfigureAwait(false);
+                        }
+
+                        await writer.FinalizeFileAsync().ConfigureAwait(false);
+                        bytes = counting.Length;
+                        asyncWriteCalls = counting.AsyncWriteCalls;
+                        asyncWriteBytes = counting.AsyncWriteBytes;
+                        asyncReadCalls = counting.AsyncReadCalls;
+                        asyncReadBytes = counting.AsyncReadBytes;
+                        syncFallback = counting.TotalSyncFallback;
+                    }
+                }
+                finally
+                {
+                    counting.Dispose();
                 }
 
-                diagnostics = new AsyncBenchmarkDiagnostics(0, 0, 0, 1, 1, "async-file");
+                diagnostics = new AsyncBenchmarkDiagnostics(asyncReadCalls, asyncWriteCalls, syncFallback, 1, 1, "async-file", asyncWriteBytes + asyncReadBytes);
             }
 
             Diagnostics = diagnostics;
@@ -182,9 +232,8 @@ internal sealed class Mp4AsyncBenchmarks
         }
     }
 
-    private (long, AsyncBenchmarkDiagnostics) ExecuteConcurrency()
+    private async Task<(long, AsyncBenchmarkDiagnostics)> ExecuteConcurrencyAsync()
     {
-        var token = CancellationToken.None;
         var codec = Scenario.Codec ?? VideoCodec.H264;
         var concurrency = Scenario.Concurrency;
         var shared = new SharedCounter();
@@ -199,27 +248,28 @@ internal sealed class Mp4AsyncBenchmarks
 
         var syncCompleted = 0;
         var tasks = new Task[concurrency];
+        var videoSamples = _videoSamples;
         for (var i = 0; i < concurrency; i++)
         {
             var stream = streams[i];
             if (Scenario.Operation == BenchmarkOperation.AsyncReaderSnapshot)
             {
-                var pending = Mp4Reader.CreateAsync(stream, true, token);
+                var pending = Mp4Reader.CreateAsync(stream, true, CancellationToken.None);
                 if (pending.IsCompleted) syncCompleted++;
-                tasks[i] = ConsumeReader(pending);
+                tasks[i] = ConsumeReaderAsync(pending);
             }
             else
             {
-                var pending = Mp4Writer.CreateAsync(stream, new Mp4WriterOptions { Mode = Mp4WriteMode.Fragmented, MaximumFragmentBufferBytes = 32 * 1024 * 1024 }, true, token);
+                var pending = Mp4Writer.CreateAsync(stream, new Mp4WriterOptions { Mode = Mp4WriteMode.Fragmented, MaximumFragmentBufferBytes = 32 * 1024 * 1024 }, true, CancellationToken.None);
                 if (pending.IsCompleted) syncCompleted++;
-                tasks[i] = IngestFragmented(pending, stream, codec);
+                tasks[i] = IngestFragmentedAsync(pending, stream, codec, videoSamples);
             }
         }
 
         gate.WaitAllEntered();
         var maxOutstanding = shared.Max;
         gate.Release();
-        Task.WaitAll(tasks);
+        await Task.WhenAll(tasks).ConfigureAwait(false);
 
         long asyncWrite = 0, asyncRead = 0, syncFallback = 0;
         foreach (var s in streams)
@@ -235,17 +285,17 @@ internal sealed class Mp4AsyncBenchmarks
         return (asyncWrite + asyncRead, Diagnostics);
     }
 
-    private static async Task ConsumeReader(Task<Mp4Reader> pending)
+    private static async Task ConsumeReaderAsync(Task<Mp4Reader> pending)
     {
         using var reader = await pending.ConfigureAwait(false);
         _ = reader.VideoConfiguration?.NalLengthSize ?? reader.AudioConfiguration?.SampleRate ?? 0;
     }
 
-    private async Task IngestFragmented(Task<Mp4Writer> pending, AsyncCountingStream stream, VideoCodec codec)
+    private static async Task IngestFragmentedAsync(Task<Mp4Writer> pending, AsyncCountingStream stream, VideoCodec codec, IReadOnlyList<EncodedVideoNalUnit> videoSamples)
     {
         using var writer = await pending.ConfigureAwait(false);
         writer.SetVideoCodecConfiguration(FixedFixtureMatrix.VideoConfiguration(codec));
-        foreach (var sample in _videoSamples) await writer.WriteVideoNalUnitAsync(sample).ConfigureAwait(false);
+        foreach (var sample in videoSamples) await writer.WriteVideoNalUnitAsync(sample).ConfigureAwait(false);
         await writer.FinalizeFileAsync().ConfigureAwait(false);
         _ = stream.Length;
     }

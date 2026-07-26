@@ -14,7 +14,7 @@ internal static class Program
         WriteIndented = true
     };
 
-    public static int Main(string[] args)
+    public static async Task<int> Main(string[] args)
     {
         try
         {
@@ -22,9 +22,9 @@ internal static class Program
             return args[0] switch
             {
                 "baseline" => Baseline(args[1..]),
-                "capture" => Capture(args[1..]),
+                "capture" => await Capture(args[1..]),
                 "compare" => Compare(args[1..]),
-                "self-test" => SelfTest(),
+                "self-test" => await SelfTest(),
                 _ => Usage()
             };
         }
@@ -75,7 +75,7 @@ internal static class Program
         return 0;
     }
 
-    private static int Capture(string[] args)
+    private static async Task<int> Capture(string[] args)
     {
         var output = RequiredOption(args, "--output");
         var operations = int.TryParse(Option(args, "--operations"), out var parsed) ? parsed : 3;
@@ -84,7 +84,7 @@ internal static class Program
         var scenarios = syncOnly
             ? FixedFixtureMatrix.Scenarios.Where(value => value.IoMode == IoMode.Sync).ToArray()
             : FixedFixtureMatrix.Scenarios;
-        var run = BenchmarkCapture.Capture(scenarios, operations, Environment.CommandLine);
+        var run = await BenchmarkCapture.Capture(scenarios, operations, Environment.CommandLine).ConfigureAwait(false);
         BenchmarkRunProvenance.Seal(run, output);
         WriteJson(output, run, BenchmarkJsonContext.Default.BenchmarkRun);
         Console.WriteLine("Captured " + run.Results.Count + " scenarios to " + output);
@@ -116,10 +116,10 @@ internal static class Program
         return report.Passed ? 0 : 1;
     }
 
-    private static int SelfTest()
+    private static async Task<int> SelfTest()
     {
         var scenarios = FixedFixtureMatrix.Scenarios.Take(2).ToArray();
-        var run = BenchmarkCapture.Capture(scenarios, 1, "self-test");
+        var run = await BenchmarkCapture.Capture(scenarios, 1, "self-test").ConfigureAwait(false);
         BenchmarkRunProvenance.Seal(run, Path.Combine(Path.GetTempPath(), "dotcore-mp4-self-test-baseline.json"));
         if (run.Results.Count != 2 || run.Results.Any(result => result.Operations <= 0))
         {
@@ -185,7 +185,7 @@ internal static class Program
         }
 
         var asyncScenario = FixedFixtureMatrix.Scenarios.First(value => value.IoMode == IoMode.Async);
-        var asyncRun = BenchmarkCapture.Capture(new[] { asyncScenario }, 1, "self-test-async");
+        var asyncRun = await BenchmarkCapture.Capture(new[] { asyncScenario }, 1, "self-test-async").ConfigureAwait(false);
         BenchmarkRunProvenance.Seal(asyncRun, Path.Combine(Path.GetTempPath(), "dotcore-mp4-self-test-async.json"));
         var asyncResult = asyncRun.Results[0];
         if (asyncResult.CompletedOperations != asyncScenario.Concurrency || asyncResult.AsyncWriteCalls + asyncResult.AsyncReadCalls <= 0)
@@ -304,7 +304,7 @@ internal static class Program
 
 internal static class BenchmarkCapture
 {
-    public static BenchmarkRun Capture(
+    public static async Task<BenchmarkRun> Capture(
         IReadOnlyList<BenchmarkScenario> scenarios,
         int operations,
         string command)
@@ -324,7 +324,7 @@ internal static class BenchmarkCapture
 
         foreach (var scenario in scenarios.OrderBy(value => value.Id, StringComparer.Ordinal))
         {
-            WarmUp(scenario);
+            await WarmUp(scenario).ConfigureAwait(false);
             var elapsed = new List<double>();
             var allocated = new List<double>();
             StreamDiagnostics diagnostics = default;
@@ -350,8 +350,8 @@ internal static class BenchmarkCapture
                         var started = Stopwatch.GetTimestamp();
                         if (isAsync)
                         {
-                            _ = asyncBenchmark!.Execute();
-                            asyncDiagnostics = asyncBenchmark.Diagnostics;
+                            var (_, asyncDiag) = await asyncBenchmark!.ExecuteAsync().ConfigureAwait(false);
+                            asyncDiagnostics = asyncDiag;
                         }
                         else
                         {
@@ -419,14 +419,14 @@ internal static class BenchmarkCapture
         return run;
     }
 
-    private static void WarmUp(BenchmarkScenario scenario)
+    private static async Task WarmUp(BenchmarkScenario scenario)
     {
         if (scenario.IoMode == IoMode.Async)
         {
             var asyncBenchmark = new Mp4AsyncBenchmarks { Scenario = scenario };
             asyncBenchmark.GlobalSetup();
             asyncBenchmark.IterationSetup();
-            try { _ = asyncBenchmark.Execute(); }
+            try { _ = await asyncBenchmark.ExecuteAsync().ConfigureAwait(false); }
             finally { asyncBenchmark.Dispose(); }
             return;
         }
@@ -657,16 +657,19 @@ internal static class BenchmarkComparator
     {
         var runs = baselineRuns.Concat(candidateRuns).ToArray();
         if (runs.Length == 0) return;
+        // Regression comparison intentionally compares a pre-change baseline against a
+        // candidate, so source commits (and dirty-worktree state) may differ between the
+        // two sides. What must stay constant is the controlled environment: harness
+        // version, runtime, OS and processor identity.
         var expected = runs[0];
         foreach (var run in runs.Skip(1))
         {
             if (run.HarnessVersion != expected.HarnessVersion ||
-                run.SourceCommit != expected.SourceCommit ||
                 run.Runtime != expected.Runtime ||
                 run.OperatingSystem != expected.OperatingSystem ||
                 run.Processor != expected.Processor)
             {
-                errors.Add("Benchmark runs do not share the same harness, source commit, runtime, OS, and processor identity.");
+                errors.Add("Benchmark runs do not share the same harness version, runtime, OS, and processor identity (controlled environment required).");
                 return;
             }
         }
