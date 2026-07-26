@@ -151,6 +151,18 @@ Comparator 要求所有 scenario identity/parameters完全相同。至少 1 MiB 
 
 這個 benchmark 不代表 async I/O、streaming Reader、public borrowed-memory API 或 faststart layout redesign；這些都不在目前 copy-reduction scope。Stream call count是 bounded-write診斷，不能取代 throughput gate。
 
+### 非同步 benchmark
+
+`add-mp4-async-io` 擴充同一 harness，分開量測三個 async family，scenario identity 新增 `IoMode`、`StreamKind`、`Concurrency` 與 delay/gate，result 新增 async read/write calls、sync fallback calls、maximum outstanding I/O、completed/synchronously-completed operations 與 synchronous completion ratio。Measured async dispatcher 在停止計時、擷取 allocation/GC/calls 與 cleanup 前會 await operation；concurrency scenario 以 `Task.WhenAll` 等待，並以 shared `ConcurrencyGate` 在所有 operation 進入後才釋放，使觀察到的 maximum in-flight 等於 scenario concurrency，不使用 `Thread.Sleep`。
+
+三個 family 分開解讀，不得將任一 family 結果外推為普遍單次 throughput 提升：
+
+1. **Immediate-completion memory**：pre-sized `AsyncCountingStream` 量測 paired sync/async Reader snapshot、progressive ingestion、fragment flush 與 faststart finalization 的 ns/op、allocation 與 async call counts；synchronous completion ratio 接近 1，只反映 async dispatch overhead。
+2. **Real file I/O**：以 `FileOptions.Asynchronous` 建立 temporary `FileStream`，量測 Reader snapshot 與 progressive Writer ingestion；fixture/file setup 排除於 measured operation。
+3. **Bounded-concurrency scalability**：`BarrierGatedAsyncCountingStream` 以 shared gate 在 concurrency 1/32/128 同時 pending，證明全部完成、maximum in-flight 等於 concurrency、sync fallback 為零且無 deadlock。
+
+Comparator/self-test 對缺少 async identity、不同 Stream kind/concurrency、nonzero sync fallback 或未完成 operation 以 nonzero 失敗。既有 required sync scenario IDs 套用不退化超過 10% 的 throughput gate；async scenarios 的 `Required` 與 `AllocationGate` 為 false，數值誠實回報而不設定宣稱普遍加速的門檻。
+
 ## Build、測試與互通性驗證
 
 需要 .NET SDK 10，以及 PATH 中的 `ffprobe` 和 `ffmpeg` 才能執行外部工具驗證。mounted checkout 若帶有錯誤的 Visual Studio fallback path，使用空的 `RestoreFallbackFolders`：
@@ -171,6 +183,7 @@ dotnet run --project samples/DotCore.Mp4.Console/DotCore.Mp4.Console.csproj --no
 dotnet run --project samples/DotCore.Mp4.Console/DotCore.Mp4.Console.csproj --no-build -- /tmp/dotcore-faststart.mp4 faststart
 dotnet run --project samples/DotCore.Mp4.Console/DotCore.Mp4.Console.csproj --no-build -- /tmp/dotcore-fragmented.mp4 fragmented
 dotnet run --project samples/DotCore.Mp4.Console/DotCore.Mp4.Console.csproj --no-build -- /tmp/dotcore-h265-fragmented.mp4 fragmented h265
+dotnet run --project samples/DotCore.Mp4.Console/DotCore.Mp4.Console.csproj --no-build -- /tmp/dotcore-async.mp4 progressive h264 async
 
 ffprobe -v error -show_format -show_streams -of json /tmp/dotcore-fragmented.mp4
 ffmpeg -v error -i /tmp/dotcore-fragmented.mp4 -map 0 -f null -

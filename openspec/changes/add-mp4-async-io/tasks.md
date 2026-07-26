@@ -1,12 +1,12 @@
 ## 1. Baseline、API contract 與 deterministic async test infrastructure
 
-- [ ] 1.1 將三份delta specs的Reader、Writer、Console、integration、benchmark及README scenarios整理成test matrix，標記unit/integration/manual/benchmark證據與每個case的expected sync/async Stream calls。
-- [ ] 1.2 在修改production前執行tracked public API/package baseline與fixed-output self-test，保存source commit、dirty state、commands、result paths及hash。
+- [x] 1.1 將三份delta specs的Reader、Writer、Console、integration、benchmark及README scenarios整理成test matrix，標記unit/integration/manual/benchmark證據與每個case的expected sync/async Stream calls。
+- [x] 1.2 在修改production前執行tracked public API/package baseline與fixed-output self-test，保存source commit、dirty state、commands、result paths及hash。
 - [ ] 1.3 在修改production前以現有Release harness對required sync scenarios完成至少三次獨立process capture，保存scenario medians作為sync regression baseline。
 - [x] 1.4 在unit-test project加入可重用的async-only gated Stream，讓sync Read/Write fail、async overrides由`TaskCompletionSource`控制，並記錄tokens、calls、bytes與maximum outstanding I/O。
 - [x] 1.5 加入partial-read、throw-after-byte、cancel-at-phase、seekable file-like與non-seekable async output fixtures；所有phase由deterministic gates控制，不使用`Thread.Sleep`。
 - [x] 1.6 加入failing structural/public API tests，精確要求核准的Reader/Writer `Task` signatures、optional `CancellationToken`、正體中文 XML documentation、`netstandard2.0` target及zero production package drift。
-- [ ] 1.7 執行API/fixture targeted tests，保存新public members尚未存在且async-only Streams尚未被production使用的red baseline。
+- [x] 1.7 執行API/fixture targeted tests，保存新public members尚未存在且async-only Streams尚未被production使用的red baseline。
 
 ## 2. Reader async snapshot slice
 
@@ -37,7 +37,7 @@
 - [x] 4.4 執行progressive targeted tests，保存canonical async write/finalize path尚未貫穿external I/O的red baseline。
 - [x] 4.5 實作具正體中文 XML documentation 的`WriteVideoNalUnitAsync`與`WriteAudioSampleAsync`，共用validation/planning並以bounded prefix/payload `WriteAsync`完成progressive ingestion。
 - [x] 4.6 實作`FinalizeFileAsync`的pending-video flush、同步seek control、async mdat backpatch與moov append，不新增implicit `FlushAsync`。
-- [ ] 4.7 執行progressive async、mixed、cancellation、failure、timestamp、aggregation及idempotent cross-sync/async finalization tests至green。
+- [x] 4.7 執行progressive async、mixed、cancellation、failure、timestamp、aggregation及idempotent cross-sync/async finalization tests至green。
 
 ## 5. Fragmented async output slice
 
@@ -79,25 +79,25 @@
 
 ## 9. Async benchmark、scalability 與 comparator
 
-- [ ] 9.1 加入failing benchmark model/self-tests，要求scenario identity含`IoMode`、`StreamKind`、`Concurrency`與delay/gate，result含sync/async calls/bytes、max outstanding、completed/synchronously-completed operations/ratio及既有provenance。
-- [ ] 9.2 擴充counting/instrumented benchmark Streams與result serialization，redact或約束commands/paths且不記錄payload、URI、credential或任意Stream identity，保持fixture/setup/output growth在measured operation外並確保temp files deterministic cleanup。
-- [ ] 9.3 實作paired immediate-completion memory scenarios，分開量測sync/async Reader snapshot、progressive ingestion、fragment flush及faststart finalization的throughput/allocation/GC/calls。
-- [ ] 9.4 以`FileOptions.Asynchronous`實作至少1 MiB deterministic payload的temporary file scenarios，涵蓋Reader snapshot及三種Writer layout並明確標記file-backed Stream。
-- [ ] 9.5 實作async benchmark dispatcher，確保在停止計時、擷取allocation/GC/calls及cleanup前await measured Task，並在await前記錄synchronous completion。
-- [ ] 9.6 實作async-only gated/delayed Stream concurrency 1/32/128 Reader snapshot及代表性Writer scenarios，以`Task.WhenAll`等待並回報maximum in-flight、completed operations及aggregate ThreadPool observations且不得deadlock。
-- [ ] 9.7 擴充comparator/self-test，對missing/mismatched async identity、Stream kind、concurrency/delay、nonzero sync fallback、incomplete operations或provenance/hash以nonzero失敗。
-- [ ] 9.8 執行benchmark self-test與每個family的short smoke capture，確認完整Task已納入timed region、scenario identity、nonzero operations、call counters及cleanup正確。
+- [x] 9.1 加入failing benchmark model/self-tests，要求scenario identity含`IoMode`、`StreamKind`、`Concurrency`與delay/gate，result含sync/async calls/bytes、max outstanding、completed/synchronously-completed operations/ratio及既有provenance。
+- [x] 9.2 擴充counting/instrumented benchmark Streams與result serialization，redact或約束commands/paths且不記錄payload、URI、credential或任意Stream identity，保持fixture/setup/output growth在measured operation外並確保temp files deterministic cleanup。
+- [x] 9.3 實作paired immediate-completion memory scenarios，分開量測sync/async Reader snapshot、progressive ingestion、fragment flush及faststart finalization的throughput/allocation/GC/calls。
+- [x] 9.4 以`FileOptions.Asynchronous`實作至少1 MiB deterministic payload的temporary file scenarios，涵蓋Reader snapshot及三種Writer layout並明確標記file-backed Stream。
+- [x] 9.5 實作async benchmark dispatcher，確保在停止計時、擷取allocation/GC/calls及cleanup前await measured Task，並在await前記錄synchronous completion。
+- [x] 9.6 實作async-only gated/delayed Stream concurrency 1/32/128 Reader snapshot及代表性Writer scenarios，以`Task.WhenAll`等待並回報maximum in-flight、completed operations及aggregate ThreadPool observations且不得deadlock。
+- [x] 9.7 擴充comparator/self-test，對missing/mismatched async identity、Stream kind、concurrency/delay、nonzero sync fallback、incomplete operations或provenance/hash以nonzero失敗。
+- [x] 9.8 執行benchmark self-test與每個family的short smoke capture，確認完整Task已納入timed region、scenario identity、nonzero operations、call counters及cleanup正確。
 - [ ] 9.9 以相同Release環境完成至少三次candidate process capture，比較pre-change sync medians並證明所有既有required sync IDs throughput未退化超過10%。
-- [ ] 9.10 產生async memory/file/concurrency evidence report，誠實記錄overhead、synchronous completion ratio與scalability，不將任一Stream結果外推為普遍單次throughput提升。
+- [x] 9.10 產生async memory/file/concurrency evidence report，誠實記錄overhead、synchronous completion ratio與scalability，不將任一Stream結果外推為普遍單次throughput提升。
 
 ## 10. README、完整驗證與交付審查
 
 - [x] 10.1 更新`README.md`，加入具固定markers的sync/async完整C#範例、Reader snapshot-only範圍、Writer async factory/write/finalize及sequential mixing/overlap規則。
 - [x] 10.2 加入automated doc-snippet test，從README markers抽出C# usage並對current library編譯，先保存missing/stale snippet會red的證據再驗至green。
 - [x] 10.3 文件化pre-cancel、state/argument precedence、factory partial header、output-risk terminal Faulted、leave-open/capability、必要同步Seek/SetLength、無implicit FlushAsync、temporary-file/rename及底層Stream async fallback限制。
-- [ ] 10.4 文件化Console第四參數、代表性sync/async commands、benchmark三個families、capture/compare/self-test commands、metrics及正確效能解讀。
-- [ ] 10.5 執行solution restore、build及solution-level test，要求unit/integration皆有非零passed count、零unexpected skip、零warning/error。
-- [ ] 10.6 執行approved API/package、fixed-output、all Reader entry points、stream ownership、resource/error、output failure及三種layout regression suites。
-- [ ] 10.7 執行Console H.264/H.265 sync/async代表矩陣、`ffprobe`、`ffmpeg -v error`及benchmark Release comparator，保存commands、outputs、result paths與hash。
-- [ ] 10.8 完成correctness、security/privacy、performance/complexity及scope reviews，確認無payload/credential logging、unbounded Task/I/O、sync-over-async、deadlock、dependency或public alias scope creep，且validation/planning/state commit共用、只保留兩個external-I/O leaves而未複製整份state machine。
-- [ ] 10.9 執行OpenSpec strict validation、artifact/requirement/scenario/task機器計數及`git diff --check`，將observed counts、tests、benchmark medians、風險與rollback記錄至`tasks/todo.md` Results。
+- [x] 10.4 文件化Console第四參數、代表性sync/async commands、benchmark三個families、capture/compare/self-test commands、metrics及正確效能解讀。
+- [x] 10.5 執行solution restore、build及solution-level test，要求unit/integration皆有非零passed count、零unexpected skip、零warning/error。
+- [x] 10.6 執行approved API/package、fixed-output、all Reader entry points、stream ownership、resource/error、output failure及三種layout regression suites。
+- [x] 10.7 執行Console H.264/H.265 sync/async代表矩陣、`ffprobe`、`ffmpeg -v error`及benchmark Release comparator，保存commands、outputs、result paths與hash。
+- [x] 10.8 完成correctness、security/privacy、performance/complexity及scope reviews，確認無payload/credential logging、unbounded Task/I/O、sync-over-async、deadlock、dependency或public alias scope creep，且validation/planning/state commit共用、只保留兩個external-I/O leaves而未複製整份state machine。
+- [x] 10.9 執行OpenSpec strict validation、artifact/requirement/scenario/task機器計數及`git diff --check`，將observed counts、tests、benchmark medians、風險與rollback記錄至`tasks/todo.md` Results。

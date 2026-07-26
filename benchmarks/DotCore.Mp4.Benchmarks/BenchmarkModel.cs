@@ -9,7 +9,28 @@ public enum BenchmarkOperation
     ReaderDelivery,
     WriterIngestion,
     FragmentFlush,
-    FastStartFinalization
+    FastStartFinalization,
+    AsyncReaderSnapshot,
+    AsyncWriterIngestion,
+    AsyncFragmentFlush,
+    AsyncFastStartFinalization,
+    AsyncConcurrency
+}
+
+public enum IoMode
+{
+    Sync,
+    Async
+}
+
+public enum StreamKind
+{
+    None,
+    PrebuiltMemory,
+    CountingPreSizedMemory,
+    AsyncPreSizedMemory,
+    AsyncFile,
+    AsyncGated
 }
 
 public enum VideoInputKind
@@ -43,7 +64,10 @@ public sealed record BenchmarkScenario(
     bool DataAccess,
     string StreamKind,
     bool Required,
-    bool AllocationGate)
+    bool AllocationGate,
+    IoMode IoMode = IoMode.Sync,
+    int Concurrency = 1,
+    long DelayTicks = 0)
 {
     public override string ToString() => Id;
 }
@@ -76,6 +100,10 @@ internal sealed class BenchmarkResult
     public int SampleCount { get; set; }
     public int NalCount { get; set; }
     public int GopLength { get; set; }
+    public IoMode IoMode { get; set; }
+    public string StreamKind { get; set; } = string.Empty;
+    public int Concurrency { get; set; } = 1;
+    public long DelayTicks { get; set; }
     public long Operations { get; set; }
     public double MedianNanoseconds { get; set; }
     public double OperationsPerSecond { get; set; }
@@ -89,6 +117,13 @@ internal sealed class BenchmarkResult
     public long StreamSetLengthCalls { get; set; }
     public long StreamBytesWritten { get; set; }
     public long OutputGrowthEvents { get; set; }
+    public long AsyncWriteCalls { get; set; }
+    public long AsyncReadCalls { get; set; }
+    public long SyncFallbackCalls { get; set; }
+    public long MaxOutstandingIo { get; set; }
+    public long CompletedOperations { get; set; }
+    public long SynchronouslyCompletedOperations { get; set; }
+    public double SynchronousCompletionRatio { get; set; }
 }
 
 internal sealed class ComparisonReport

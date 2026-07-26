@@ -257,6 +257,24 @@ internal static class FixedFixtureMatrix
         result.Add(Reader("reader.delivery.no-event.aac.large", BenchmarkOperation.ReaderDelivery, null, "aac", NalShape.None, false, false, true));
         result.Add(Reader("reader.delivery.events.aac.large", BenchmarkOperation.ReaderDelivery, null, "aac", NalShape.None, true, false, false));
         result.Add(Reader("reader.delivery.data-access.aac.large", BenchmarkOperation.ReaderDelivery, null, "aac", NalShape.None, false, true, false));
+
+        foreach (var codec in new[] { VideoCodec.H264, VideoCodec.H265 })
+        {
+            var codecName = codec == VideoCodec.H264 ? "h264" : "h265";
+            result.Add(AsyncReader("async.reader.snapshot." + codecName + ".large-video", codec, "video", NalShape.Single));
+            result.Add(AsyncWriter("async.writer.ingestion.progressive." + codecName + ".annexb.multi", codec, Mp4WriteMode.Progressive, VideoInputKind.AnnexB, NalShape.Multi, 8, 8));
+            result.Add(AsyncWriter("async.writer.fragment-flush." + codecName + ".short-gop", codec, Mp4WriteMode.Fragmented, VideoInputKind.AnnexB, NalShape.Multi, 8, 8));
+            result.Add(AsyncWriter("async.writer.finalize.faststart." + codecName + ".annexb", codec, Mp4WriteMode.FastStart, VideoInputKind.AnnexB, NalShape.Multi, 64, 8));
+            result.Add(AsyncFile("async.reader.snapshot.file." + codecName + ".large-video", codec, BenchmarkOperation.AsyncReaderSnapshot));
+            result.Add(AsyncFile("async.writer.ingestion.file.progressive." + codecName + ".annexb", codec, BenchmarkOperation.AsyncWriterIngestion));
+        }
+
+        foreach (var concurrency in new[] { 1, 32, 128 })
+        {
+            result.Add(AsyncConcurrency("async.concurrency.reader." + concurrency + ".h264", VideoCodec.H264, BenchmarkOperation.AsyncReaderSnapshot, concurrency));
+            result.Add(AsyncConcurrency("async.concurrency.writer." + concurrency + ".h264", VideoCodec.H264, BenchmarkOperation.AsyncWriterIngestion, concurrency));
+        }
+
         return result.OrderBy(scenario => scenario.Id, StringComparer.Ordinal).ToArray();
     }
 
@@ -322,5 +340,125 @@ internal static class FixedFixtureMatrix
             "counting-pre-sized-memory",
             required,
             allocationGate);
+    }
+
+    private static BenchmarkScenario AsyncReader(
+        string id,
+        VideoCodec? codec,
+        string payload,
+        NalShape shape)
+    {
+        const int samples = 8;
+        return new BenchmarkScenario(
+            id,
+            BenchmarkOperation.AsyncReaderSnapshot,
+            codec,
+            Mp4WriteMode.Progressive,
+            VideoInputKind.None,
+            shape,
+            payload,
+            payload == "aac" ? LargeAacBytes * samples : LargeNalBytes * samples,
+            samples,
+            shape == NalShape.Multi ? samples * 2 : payload == "aac" ? 0 : samples,
+            4,
+            false,
+            false,
+            "async-pre-sized-memory",
+            false,
+            false,
+            IoMode.Async,
+            1,
+            0);
+    }
+
+    private static BenchmarkScenario AsyncWriter(
+        string id,
+        VideoCodec codec,
+        Mp4WriteMode layout,
+        VideoInputKind input,
+        NalShape shape,
+        int samples,
+        int gop)
+    {
+        var logicalBytes = checked(samples * LargeNalBytes);
+        return new BenchmarkScenario(
+            id,
+            layout == Mp4WriteMode.Fragmented ? BenchmarkOperation.AsyncFragmentFlush :
+            layout == Mp4WriteMode.FastStart ? BenchmarkOperation.AsyncFastStartFinalization :
+            BenchmarkOperation.AsyncWriterIngestion,
+            codec,
+            layout,
+            input,
+            shape,
+            "video",
+            logicalBytes,
+            samples,
+            shape == NalShape.Multi ? samples * 2 : samples,
+            gop,
+            false,
+            false,
+            "async-pre-sized-memory",
+            false,
+            false,
+            IoMode.Async,
+            1,
+            0);
+    }
+
+    private static BenchmarkScenario AsyncFile(
+        string id,
+        VideoCodec codec,
+        BenchmarkOperation operation)
+    {
+        const int samples = 8;
+        return new BenchmarkScenario(
+            id,
+            operation,
+            codec,
+            operation == BenchmarkOperation.AsyncWriterIngestion ? Mp4WriteMode.Progressive : Mp4WriteMode.Progressive,
+            VideoInputKind.AnnexB,
+            NalShape.Multi,
+            "video",
+            checked(samples * LargeNalBytes),
+            samples,
+            samples * 2,
+            8,
+            false,
+            false,
+            "async-file",
+            false,
+            false,
+            IoMode.Async,
+            1,
+            0);
+    }
+
+    private static BenchmarkScenario AsyncConcurrency(
+        string id,
+        VideoCodec codec,
+        BenchmarkOperation operation,
+        int concurrency)
+    {
+        const int samples = 8;
+        return new BenchmarkScenario(
+            id,
+            operation,
+            codec,
+            operation == BenchmarkOperation.AsyncWriterIngestion ? Mp4WriteMode.Fragmented : Mp4WriteMode.Progressive,
+            VideoInputKind.AnnexB,
+            NalShape.Multi,
+            "video",
+            checked(samples * LargeNalBytes),
+            samples,
+            samples * 2,
+            8,
+            false,
+            false,
+            "async-gated",
+            false,
+            false,
+            IoMode.Async,
+            concurrency,
+            0);
     }
 }

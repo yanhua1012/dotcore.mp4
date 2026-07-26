@@ -179,7 +179,40 @@ internal static class Program
             throw new InvalidOperationException("Comparator accepted duplicate process provenance.");
         }
 
-        Console.WriteLine("Self-test passed: capture, provenance, exact identities/parameters, allocation gate, and throughput gate.");
+        var asyncScenario = FixedFixtureMatrix.Scenarios.First(value => value.IoMode == IoMode.Async);
+        var asyncRun = BenchmarkCapture.Capture(new[] { asyncScenario }, 1, "self-test-async");
+        BenchmarkRunProvenance.Seal(asyncRun, Path.Combine(Path.GetTempPath(), "dotcore-mp4-self-test-async.json"));
+        var asyncResult = asyncRun.Results[0];
+        if (asyncResult.CompletedOperations != asyncScenario.Concurrency || asyncResult.AsyncWriteCalls + asyncResult.AsyncReadCalls <= 0)
+        {
+            throw new InvalidOperationException("Async self-test did not capture async call counts or completed operations.");
+        }
+
+        var asyncIdentityMismatch = Clone(asyncRun);
+        asyncIdentityMismatch.Results[0].IoMode = IoMode.Sync;
+        BenchmarkRunProvenance.Seal(asyncIdentityMismatch, Path.Combine(Path.GetTempPath(), "dotcore-mp4-self-test-async-identity.json"));
+        if (BenchmarkComparator.Compare(new[] { asyncRun }, new[] { asyncIdentityMismatch }, minimumRuns: 1).Passed)
+        {
+            throw new InvalidOperationException("Comparator accepted mismatched async I/O identity.");
+        }
+
+        var asyncSyncFallback = Clone(asyncRun);
+        asyncSyncFallback.Results[0].SyncFallbackCalls = 5;
+        BenchmarkRunProvenance.Seal(asyncSyncFallback, Path.Combine(Path.GetTempPath(), "dotcore-mp4-self-test-async-fallback.json"));
+        if (BenchmarkComparator.Compare(new[] { asyncRun }, new[] { asyncSyncFallback }, minimumRuns: 1).Passed)
+        {
+            throw new InvalidOperationException("Comparator accepted nonzero synchronous fallback in an async scenario.");
+        }
+
+        var asyncIncomplete = Clone(asyncRun);
+        asyncIncomplete.Results[0].CompletedOperations = 0;
+        BenchmarkRunProvenance.Seal(asyncIncomplete, Path.Combine(Path.GetTempPath(), "dotcore-mp4-self-test-async-incomplete.json"));
+        if (BenchmarkComparator.Compare(new[] { asyncRun }, new[] { asyncIncomplete }, minimumRuns: 1).Passed)
+        {
+            throw new InvalidOperationException("Comparator accepted incomplete concurrent async operations.");
+        }
+
+        Console.WriteLine("Self-test passed: capture, provenance, exact identities/parameters, allocation gate, throughput gate, and async identity/fallback/completion validation.");
         return 0;
     }
 
@@ -290,16 +323,19 @@ internal static class BenchmarkCapture
             var elapsed = new List<double>();
             var allocated = new List<double>();
             StreamDiagnostics diagnostics = default;
+            AsyncBenchmarkDiagnostics asyncDiagnostics = default;
             long gen0Collections = 0;
             long gen1Collections = 0;
             long gen2Collections = 0;
+            var isAsync = scenario.IoMode == IoMode.Async;
             var benchmark = new Mp4Benchmarks { Scenario = scenario };
-            benchmark.GlobalSetup();
+            var asyncBenchmark = isAsync ? new Mp4AsyncBenchmarks { Scenario = scenario } : null;
+            if (isAsync) asyncBenchmark!.GlobalSetup(); else benchmark.GlobalSetup();
             try
             {
                 for (var index = 0; index < operations; index++)
                 {
-                    benchmark.IterationSetup();
+                    if (isAsync) asyncBenchmark!.IterationSetup(); else benchmark.IterationSetup();
                     try
                     {
                         var beforeAllocated = GC.GetTotalAllocatedBytes(precise: true);
@@ -307,7 +343,15 @@ internal static class BenchmarkCapture
                         var beforeGen1 = GC.CollectionCount(1);
                         var beforeGen2 = GC.CollectionCount(2);
                         var started = Stopwatch.GetTimestamp();
-                        _ = benchmark.Execute();
+                        if (isAsync)
+                        {
+                            _ = asyncBenchmark!.Execute();
+                            asyncDiagnostics = asyncBenchmark.Diagnostics;
+                        }
+                        else
+                        {
+                            _ = benchmark.Execute();
+                        }
                         var stopped = Stopwatch.GetTimestamp();
                         var afterAllocated = GC.GetTotalAllocatedBytes(precise: true);
                         elapsed.Add((stopped - started) * 1_000_000_000.0 / Stopwatch.Frequency);
@@ -315,17 +359,17 @@ internal static class BenchmarkCapture
                         gen0Collections += GC.CollectionCount(0) - beforeGen0;
                         gen1Collections += GC.CollectionCount(1) - beforeGen1;
                         gen2Collections += GC.CollectionCount(2) - beforeGen2;
-                        diagnostics = GetDiagnostics(benchmark);
+                        if (!isAsync) diagnostics = GetDiagnostics(benchmark);
                     }
                     finally
                     {
-                        benchmark.IterationCleanup();
+                        if (isAsync) asyncBenchmark!.Dispose(); else benchmark.IterationCleanup();
                     }
                 }
             }
             finally
             {
-                benchmark.GlobalCleanup();
+                if (isAsync) asyncBenchmark!.Dispose(); else benchmark.GlobalCleanup();
             }
 
             var medianNanoseconds = Median(elapsed);
@@ -338,6 +382,10 @@ internal static class BenchmarkCapture
                 SampleCount = scenario.SampleCount,
                 NalCount = scenario.NalCount,
                 GopLength = scenario.GopLength,
+                IoMode = scenario.IoMode,
+                StreamKind = scenario.StreamKind,
+                Concurrency = scenario.Concurrency,
+                DelayTicks = scenario.DelayTicks,
                 Operations = operations,
                 MedianNanoseconds = medianNanoseconds,
                 OperationsPerSecond = 1_000_000_000.0 / medianNanoseconds,
@@ -350,7 +398,16 @@ internal static class BenchmarkCapture
                 StreamSeekCalls = diagnostics.SeekCalls,
                 StreamSetLengthCalls = diagnostics.SetLengthCalls,
                 StreamBytesWritten = diagnostics.BytesWritten,
-                OutputGrowthEvents = diagnostics.GrowthEvents
+                OutputGrowthEvents = diagnostics.GrowthEvents,
+                AsyncWriteCalls = asyncDiagnostics.AsyncWriteCalls,
+                AsyncReadCalls = asyncDiagnostics.AsyncReadCalls,
+                SyncFallbackCalls = asyncDiagnostics.SyncFallbackCalls,
+                MaxOutstandingIo = asyncDiagnostics.MaxOutstandingIo,
+                CompletedOperations = asyncDiagnostics.CompletedOperations,
+                SynchronouslyCompletedOperations = asyncDiagnostics.SynchronouslyCompletedOperations,
+                SynchronousCompletionRatio = asyncDiagnostics.CompletedOperations == 0
+                    ? 0
+                    : (double)asyncDiagnostics.SynchronouslyCompletedOperations / asyncDiagnostics.CompletedOperations
             });
         }
 
@@ -359,6 +416,16 @@ internal static class BenchmarkCapture
 
     private static void WarmUp(BenchmarkScenario scenario)
     {
+        if (scenario.IoMode == IoMode.Async)
+        {
+            var asyncBenchmark = new Mp4AsyncBenchmarks { Scenario = scenario };
+            asyncBenchmark.GlobalSetup();
+            asyncBenchmark.IterationSetup();
+            try { _ = asyncBenchmark.Execute(); }
+            finally { asyncBenchmark.Dispose(); }
+            return;
+        }
+
         var benchmark = new Mp4Benchmarks { Scenario = scenario };
         benchmark.GlobalSetup();
         benchmark.IterationSetup();
@@ -489,6 +556,22 @@ internal static class BenchmarkComparator
                 item.Errors.Add("Throughput regressed by more than 10%.");
             }
 
+            foreach (var asyncResult in candidateResults)
+            {
+                if (asyncResult.IoMode == IoMode.Async)
+                {
+                    if (asyncResult.SyncFallbackCalls != 0)
+                    {
+                        item.Errors.Add("Async scenario recorded nonzero synchronous Stream fallback calls.");
+                    }
+
+                    if (asyncResult.CompletedOperations != asyncResult.Concurrency)
+                    {
+                        item.Errors.Add("Async scenario did not complete all concurrent operations.");
+                    }
+                }
+            }
+
             item.Passed = item.Errors.Count == 0;
             report.Results.Add(item);
         }
@@ -591,7 +674,11 @@ internal static class BenchmarkComparator
                left.LogicalPayloadBytes == right.LogicalPayloadBytes &&
                left.SampleCount == right.SampleCount &&
                left.NalCount == right.NalCount &&
-               left.GopLength == right.GopLength;
+               left.GopLength == right.GopLength &&
+               left.IoMode == right.IoMode &&
+               StringComparer.Ordinal.Equals(left.StreamKind, right.StreamKind) &&
+               left.Concurrency == right.Concurrency &&
+               left.DelayTicks == right.DelayTicks;
     }
 
     private static double Median(IEnumerable<double> values)
