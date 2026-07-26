@@ -55,6 +55,66 @@ reader.AacSampleRead += (_, sample) => Console.WriteLine(sample.Data.Length);
 reader.Read();
 ```
 
+## 非同步 I/O
+
+元件在保留既有同步 API 的同時，新增 additive 的 `Task`/`CancellationToken` async surface，讓真正支援非阻塞 async 的底層 Stream（例如以 `FileOptions.Asynchronous` 開啟的 `FileStream`）在 I/O 等待期間能釋放 caller thread。`Task` 與 `Stream.ReadAsync(byte[], int, int, CancellationToken)`/`WriteAsync(byte[], int, int, CancellationToken)` 可由既有 `netstandard2.0` target 使用，library 內部 await 一律使用 `ConfigureAwait(false)`，且不使用 `Task.Run`、`.Result`、`.Wait()` 或 sync-over-async。
+
+Reader 只非同步化 snapshot；factory 完成後的 parsing、events 與列舉仍維持同步 memory-only 行為。
+
+<!-- snippet: reader-create-async -->
+```csharp
+await using var input = new FileStream(
+    "recording.mp4",
+    FileMode.Open,
+    FileAccess.Read,
+    FileShare.Read,
+    1 << 16,
+    FileOptions.Asynchronous);
+
+Mp4Reader reader = await Mp4Reader.CreateAsync(input, leaveOpen: true, cancellationToken: default);
+reader.VideoNalUnitRead += (_, sample) => Console.WriteLine(sample.PresentationTimestamp);
+reader.Read();
+reader.Dispose();
+```
+<!-- endsnippet -->
+
+Writer 的三種 layout 都提供 async factory 與 canonical async sample/finalization methods；metadata 先在內部 `MemoryStream` 同步建立，外部 payload I/O 走 caller Stream 的 async virtual methods，external async call count 以 metadata block/sample/NAL range 為界，不隨 payload byte length 逐 byte 增加。
+
+<!-- snippet: writer-create-async -->
+```csharp
+await using var output = new FileStream(
+    "recording.mp4",
+    FileMode.Create,
+    FileAccess.Write,
+    FileShare.Read,
+    1 << 16,
+    FileOptions.Asynchronous);
+
+Mp4Writer writer = await Mp4Writer.CreateAsync(
+    output,
+    new Mp4WriterOptions { Mode = Mp4WriteMode.Fragmented, MaximumFragmentBufferBytes = 16 * 1024 * 1024 });
+
+writer.SetVideoCodecConfiguration(videoConfiguration);
+writer.SetAudioCodecConfiguration(aacConfiguration);
+await writer.WriteVideoNalUnitAsync(
+    new EncodedVideoNalUnit(nal, pts, dts, duration, isKeyFrame),
+    cancellationToken: default);
+await writer.WriteAudioSampleAsync(
+    new EncodedAudioSample(aacBytes, pts, dts, duration),
+    cancellationToken: default);
+await writer.FinalizeFileAsync(cancellationToken: default);
+writer.Dispose();
+```
+<!-- endsnippet -->
+
+同一 Writer 一次最多執行一個 stateful configure、write、finalize 或 dispose operation；overlap 會以 `InvalidOperationException` fail-fast 拒絕（不排隊、不改變 active operation 或 media state），但依序混用 sync/async calls 合法。成功 finalization 後 `FinalizeFile()`、`FinalizeFileAsync()`、`Complete()` 與 `Finish()` 交叉重複呼叫皆不新增 bytes。
+
+對已成功回傳的 Writer，一旦新增 async operation 開始任何可能改變 caller output 的 external `WriteAsync`、faststart `SetLength`、Seek/Position backpatch 或 relocation control，之後的 cancellation 或任何 exception 都會將 Writer 標記為 terminal `Faulted`，並以指出「output may be incomplete」的 `InvalidOperationException` 拒絕後續所有 sync/async configure、write 與 finalize methods/aliases；只有無 active operation 時的 `Dispose()` 仍可用。合法 Idle operation 的 already-cancelled token 在 external I/O 與 state mutation 前取消且保持 Writer 可用；最後一個 async I/O 成功後不再作 late cancellation check，會在 operation gate 內原子 commit 成功。
+
+這個 terminal rule 只套用於已回傳 Writer 上的新增 async operation；既有同步 I/O failure contract 不變。factory 在 header output 中途取消或失敗時 task 呈現 cancellation/failure、不回傳 Writer、physical output 可能不完整，且不會因 `leaveOpen: false` 主動關閉 caller-owned Stream；caller 須自行丟棄或恢復該 output。
+
+Async 不額外承諾 `FlushAsync()`、durable storage 或原子檔案交付。`Position`、`Length`、`Seek` 與 `SetLength` 沒有 async 對應，仍屬必要的同步 control operations。若底層自訂 Stream 的 async override 自行 fallback 至同步 I/O，元件無法保證 thread reduction；元件只保證呼叫 virtual async API。需要原子交付時請寫入 temporary path，完成後再 rename。
+
 ## Allocation 與 throughput benchmark
 
 `benchmarks/DotCore.Mp4.Benchmarks` 是獨立的 .NET 10 executable；`BenchmarkDotNet` 僅由這個 project 引用，不會傳遞至 production library。Harness 使用固定 deterministic fixtures 分開量測：
@@ -116,6 +176,6 @@ ffprobe -v error -show_format -show_streams -of json /tmp/dotcore-fragmented.mp4
 ffmpeg -v error -i /tmp/dotcore-fragmented.mp4 -map 0 -f null -
 ```
 
-只提供 output path 的既有 Console invocation 仍使用 progressive H.264；第二參數可明確指定 `progressive`、`faststart` 或 `fragmented`，第三參數可選 `h264` 或 `h265` 且預設為 `h264`。未知 mode 或 codec 會顯示 usage、以非零 exit code 結束，且不建立被宣稱成功的 output。
+只提供 output path 的既有 Console invocation 仍使用 progressive H.264；第二參數可明確指定 `progressive`、`faststart` 或 `fragmented`，第三參數可選 `h264` 或 `h265` 且預設為 `h264`，第四參數可選 `sync` 或 `async` 且預設為 `sync`。`async` 會以 `FileOptions.Asynchronous` 開啟檔案並 await Writer async factory、canonical async sample/finalization methods 與 Reader async factory，snapshot 完成後仍以同步 delivery 觸發 events；省略第四參數時輸出完全相同，stdout 額外印出一行 `I/O: sync` 或 `I/O: async`。未知 mode、codec 或 I/O mode 會顯示 usage、以非零 exit code 結束，且不建立被宣稱成功的 output。
 
 unit tests 不呼叫外部工具；integration tests 會建立固定的合法 keyframe→non-keyframe→keyframe H.264/AAC 與 H.265/AAC fixtures，對六種 codec/layout 組合執行 public writer/reader round-trip、`ffprobe` 與 `ffmpeg -v error`，並讓 public reader 反向解析 FFmpeg 產生的 `empty_moov + default_base_moof + frag_keyframe` reference files。工具不存在時測試會明確標示缺少的 executable，而不宣稱 interoperability 已通過。

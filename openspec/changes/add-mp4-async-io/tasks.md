@@ -92,9 +92,9 @@
 
 ## 10. README、完整驗證與交付審查
 
-- [ ] 10.1 更新`README.md`，加入具固定markers的sync/async完整C#範例、Reader snapshot-only範圍、Writer async factory/write/finalize及sequential mixing/overlap規則。
-- [ ] 10.2 加入automated doc-snippet test，從README markers抽出C# usage並對current library編譯，先保存missing/stale snippet會red的證據再驗至green。
-- [ ] 10.3 文件化pre-cancel、state/argument precedence、factory partial header、output-risk terminal Faulted、leave-open/capability、必要同步Seek/SetLength、無implicit FlushAsync、temporary-file/rename及底層Stream async fallback限制。
+- [x] 10.1 更新`README.md`，加入具固定markers的sync/async完整C#範例、Reader snapshot-only範圍、Writer async factory/write/finalize及sequential mixing/overlap規則。
+- [x] 10.2 加入automated doc-snippet test，從README markers抽出C# usage並對current library編譯，先保存missing/stale snippet會red的證據再驗至green。
+- [x] 10.3 文件化pre-cancel、state/argument precedence、factory partial header、output-risk terminal Faulted、leave-open/capability、必要同步Seek/SetLength、無implicit FlushAsync、temporary-file/rename及底層Stream async fallback限制。
 - [ ] 10.4 文件化Console第四參數、代表性sync/async commands、benchmark三個families、capture/compare/self-test commands、metrics及正確效能解讀。
 - [ ] 10.5 執行solution restore、build及solution-level test，要求unit/integration皆有非零passed count、零unexpected skip、零warning/error。
 - [ ] 10.6 執行approved API/package、fixed-output、all Reader entry points、stream ownership、resource/error、output failure及三種layout regression suites。
