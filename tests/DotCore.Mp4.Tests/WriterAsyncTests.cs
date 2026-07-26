@@ -320,6 +320,76 @@ public sealed class WriterAsyncTests
         return output.ToArray();
     }
 
+    [Fact]
+    public async Task FragmentedAsyncOutputIsByteIdenticalToSyncAndRoundTrips()
+    {
+        var syncBytes = BuildSyncFragmented();
+        var asyncBytes = await BuildAsyncFragmented();
+        Assert.Equal(Sha256(syncBytes), Sha256(asyncBytes));
+
+        using var reader = new Mp4Reader(new MemoryStream(asyncBytes));
+        Assert.NotNull(reader.VideoConfiguration);
+        Assert.NotNull(reader.AudioConfiguration);
+        Assert.Equal(3, reader.ReadVideoNalUnits().Count());
+        Assert.Single(reader.ReadAudioSamples());
+    }
+
+    [Fact]
+    public async Task FragmentedAsyncOnNonSeekableStreamMatchesSyncOutput()
+    {
+        var syncBytes = BuildSyncFragmented();
+        using var output = new NonSeekableAsyncWriteStream();
+        var options = new Mp4WriterOptions { Mode = Mp4WriteMode.Fragmented };
+        using (var writer = await Mp4Writer.CreateAsync(output, options))
+        {
+            writer.SetVideoCodecConfiguration(TestMedia.H264Configuration);
+            writer.SetAudioCodecConfiguration(TestMedia.AacConfiguration);
+            await writer.WriteVideoNalUnitAsync(TestMedia.Video(new byte[] { 0x65, 0x01 }, TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(1)));
+            await writer.WriteAudioSampleAsync(new EncodedAudioSample(new byte[] { 0x21, 0x10 }, TimeSpan.FromMilliseconds(40), TimeSpan.FromMilliseconds(40), TimeSpan.FromMilliseconds(20)));
+            await writer.WriteVideoNalUnitAsync(TestMedia.Video(new byte[] { 0x41, 0x02 }, TimeSpan.FromMilliseconds(41), TimeSpan.FromMilliseconds(41), false));
+            await writer.WriteVideoNalUnitAsync(TestMedia.Video(new byte[] { 0x65, 0x03 }, TimeSpan.FromMilliseconds(81), TimeSpan.FromMilliseconds(81)));
+            await writer.FinalizeFileAsync();
+        }
+
+        Assert.Equal(0, output.SyncWriteCalls);
+        Assert.True(output.AsyncWriteCalls > 0);
+        Assert.Equal(Sha256(syncBytes), Sha256(output.ToArray()));
+    }
+
+    private static byte[] BuildSyncFragmented()
+    {
+        using var output = new MemoryStream();
+        var options = new Mp4WriterOptions { Mode = Mp4WriteMode.Fragmented };
+        using (var writer = new Mp4Writer(output, options))
+        {
+            writer.SetVideoCodecConfiguration(TestMedia.H264Configuration);
+            writer.SetAudioCodecConfiguration(TestMedia.AacConfiguration);
+            writer.WriteVideoNalUnit(TestMedia.Video(new byte[] { 0x65, 0x01 }, TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(1)));
+            writer.WriteAudioSample(new EncodedAudioSample(new byte[] { 0x21, 0x10 }, TimeSpan.FromMilliseconds(40), TimeSpan.FromMilliseconds(40), TimeSpan.FromMilliseconds(20)));
+            writer.WriteVideoNalUnit(TestMedia.Video(new byte[] { 0x41, 0x02 }, TimeSpan.FromMilliseconds(41), TimeSpan.FromMilliseconds(41), false));
+            writer.WriteVideoNalUnit(TestMedia.Video(new byte[] { 0x65, 0x03 }, TimeSpan.FromMilliseconds(81), TimeSpan.FromMilliseconds(81)));
+            writer.FinalizeFile();
+        }
+        return output.ToArray();
+    }
+
+    private static async Task<byte[]> BuildAsyncFragmented()
+    {
+        using var output = new SeekableAsyncOnlyStream();
+        var options = new Mp4WriterOptions { Mode = Mp4WriteMode.Fragmented };
+        using (var writer = await Mp4Writer.CreateAsync(output, options))
+        {
+            writer.SetVideoCodecConfiguration(TestMedia.H264Configuration);
+            writer.SetAudioCodecConfiguration(TestMedia.AacConfiguration);
+            await writer.WriteVideoNalUnitAsync(TestMedia.Video(new byte[] { 0x65, 0x01 }, TimeSpan.FromMilliseconds(1), TimeSpan.FromMilliseconds(1)));
+            await writer.WriteAudioSampleAsync(new EncodedAudioSample(new byte[] { 0x21, 0x10 }, TimeSpan.FromMilliseconds(40), TimeSpan.FromMilliseconds(40), TimeSpan.FromMilliseconds(20)));
+            await writer.WriteVideoNalUnitAsync(TestMedia.Video(new byte[] { 0x41, 0x02 }, TimeSpan.FromMilliseconds(41), TimeSpan.FromMilliseconds(41), false));
+            await writer.WriteVideoNalUnitAsync(TestMedia.Video(new byte[] { 0x65, 0x03 }, TimeSpan.FromMilliseconds(81), TimeSpan.FromMilliseconds(81)));
+            await writer.FinalizeFileAsync();
+        }
+        return output.ToArray();
+    }
+
     private static byte[] BuildSyncFastStart()
     {
         using var output = new MemoryStream();

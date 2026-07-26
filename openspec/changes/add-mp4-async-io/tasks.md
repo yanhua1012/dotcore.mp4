@@ -41,14 +41,14 @@
 
 ## 5. Fragmented async output slice
 
-- [ ] 5.1 加入failing fragmented tests，要求first media以async writes輸出initial metadata，下一keyframe與finalization以async writes輸出keyframe-aligned `moof`/`mdat`及video/AAC payload。
-- [ ] 5.2 加入failing async non-seekable Stream tests，涵蓋H.264/H.265、short/long GOP、mixed AAC、exact buffer boundary及pure async/mixed byte-identical round-trip。
+- [x] 5.1 加入failing fragmented tests，要求first media以async writes輸出initial metadata，下一keyframe與finalization以async writes輸出keyframe-aligned `moof`/`mdat`及video/AAC payload。
+- [x] 5.2 加入failing async non-seekable Stream tests，涵蓋H.264/H.265、short/long GOP、mixed AAC、exact buffer boundary及pure async/mixed byte-identical round-trip。
 - [ ] 5.3 加入failing cancel/exception matrix，分別在initial metadata、moof、mdat header與mid video/AAC payload中斷，assert selected samples/accounting/sequence不提前commit且Writer terminal Faulted。
-- [ ] 5.4 執行fragmented targeted tests，保存startup/fragment flush仍呼叫同步external writes的red baseline。
-- [ ] 5.5 將initial metadata building與external output分離，實作`EnsureFragmentedStartedAsync`並只在完整async output後標記started。
-- [ ] 5.6 實作`FlushFragmentAsync`與fragment payload async range writes，維持video-first/audio-second order、bounded call model及成功後state commit。
-- [ ] 5.7 將async video/audio ingestion接至fragment selection/flush而不複製既有state logic，保留first-keyframe、global DTS與buffer-limit rejection timing。
-- [ ] 5.8 執行fragmented async、non-seekable、output failure、resource、ordering、state accounting及sync regression tests至green。
+- [x] 5.4 執行fragmented targeted tests，保存startup/fragment flush仍呼叫同步external writes的red baseline。
+- [x] 5.5 將initial metadata building與external output分離，實作`EnsureFragmentedStartedAsync`並只在完整async output後標記started。
+- [x] 5.6 實作`FlushFragmentAsync`與fragment payload async range writes，維持video-first/audio-second order、bounded call model及成功後state commit。
+- [x] 5.7 將async video/audio ingestion接至fragment selection/flush而不複製既有state logic，保留first-keyframe、global DTS與buffer-limit rejection timing。
+- [x] 5.8 執行fragmented async、non-seekable、output failure、resource、ordering、state accounting及sync regression tests至green。
 
 ## 6. Faststart async relocation slice
 

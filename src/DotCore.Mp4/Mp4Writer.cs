@@ -376,7 +376,7 @@ public sealed class Mp4Writer : IDisposable
             ValidateNalLengths(nalUnits, _videoConfiguration!.NalLengthSize);
             if (_mode == Mp4WriteMode.Fragmented)
             {
-                WriteFragmentedVideoNalUnits(sample, nalUnits, pts, dts, duration);
+                await WriteFragmentedVideoNalUnitsAsync(sample, nalUnits, pts, dts, duration, cancellationToken).ConfigureAwait(false);
                 ExitOperationToIdleOnSyncFailure();
                 return;
             }
@@ -475,7 +475,7 @@ public sealed class Mp4Writer : IDisposable
         }
     }
 
-    private Task WriteFragmentedAudioAsync(
+    private async Task WriteFragmentedAudioAsync(
         EncodedAudioSample sample,
         long pts,
         long dts,
@@ -490,7 +490,7 @@ public sealed class Mp4Writer : IDisposable
         ValidateGlobalDts(dts, "audio");
         var data = sample.DataBytes;
         EnsureFragmentBufferCapacity(data.Length);
-        EnsureFragmentedStarted();
+        await EnsureFragmentedStartedAsync(cancellationToken).ConfigureAwait(false);
         _fragmentSamples.Add(new FragmentSample(
             false,
             FragmentPayloadSource.FromAudio(data),
@@ -501,7 +501,6 @@ public sealed class Mp4Writer : IDisposable
         _fragmentBufferedBytes = checked(_fragmentBufferedBytes + data.Length);
         _lastAudioDts = dts;
         _lastGlobalDts = dts;
-        return Task.CompletedTask;
     }
 
     private async Task FlushPendingVideoAsync(CancellationToken cancellationToken)
@@ -937,6 +936,66 @@ public sealed class Mp4Writer : IDisposable
         _fragmentBufferedBytes = checked(_fragmentBufferedBytes + additionalBytes);
         _lastVideoDts = dts;
         _lastGlobalDts = dts;
+    }
+
+    private async Task WriteFragmentedVideoNalUnitsAsync(
+        EncodedVideoNalUnit sample,
+        IList<NalUnitRange> nalUnits,
+        long pts,
+        long dts,
+        long duration,
+        CancellationToken cancellationToken)
+    {
+        ValidateGlobalDts(dts, "video");
+        var additionalBytes = GetEncodedVideoSize(nalUnits, _videoConfiguration!.NalLengthSize);
+        if (_pendingVideo != null && _pendingVideo.Pts == pts && _pendingVideo.Dts == dts)
+        {
+            if (_pendingVideo.Duration != duration || _pendingVideo.IsKeyFrame != sample.IsKeyFrame)
+            {
+                throw new Mp4FormatException("NAL units in one access unit must have the same duration and key-frame state.");
+            }
+
+            EnsureFragmentBufferCapacity(additionalBytes);
+            await EnsureFragmentedStartedAsync(cancellationToken).ConfigureAwait(false);
+            _pendingVideo.Nals.AddRange(nalUnits);
+            _fragmentBufferedBytes = checked(_fragmentBufferedBytes + additionalBytes);
+            _lastVideoDts = dts;
+            _lastGlobalDts = dts;
+            return;
+        }
+
+        if (!_fragmentedHasVideoSample && _pendingVideo == null && !sample.IsKeyFrame)
+        {
+            throw new InvalidOperationException("The first fragmented video access unit must be a keyframe.");
+        }
+
+        CommitPendingFragmentedVideo();
+        if (sample.IsKeyFrame && _fragmentedHasVideoSample)
+        {
+            await FlushFragmentAsync(dts, cancellationToken).ConfigureAwait(false);
+        }
+
+        EnsureFragmentBufferCapacity(additionalBytes);
+        await EnsureFragmentedStartedAsync(cancellationToken).ConfigureAwait(false);
+        _pendingVideo = new PendingVideoAccessUnit(pts, dts, duration, sample.IsKeyFrame, nalUnits);
+        _fragmentBufferedBytes = checked(_fragmentBufferedBytes + additionalBytes);
+        _lastVideoDts = dts;
+        _lastGlobalDts = dts;
+    }
+
+    private async Task EnsureFragmentedStartedAsync(CancellationToken cancellationToken)
+    {
+        if (_fragmentedStarted) return;
+        if (_videoConfiguration == null)
+        {
+            throw new InvalidOperationException("Fragmented MP4 output requires video configuration before media.");
+        }
+
+        var fileType = BuildBytes(WriteFileTypeBox);
+        var movie = BuildFragmentedInitialMovieBox();
+        await _output.WriteAsync(fileType, 0, fileType.Length, cancellationToken).ConfigureAwait(false);
+        await _output.WriteAsync(movie, 0, movie.Length, cancellationToken).ConfigureAwait(false);
+        _fragmentedStarted = true;
     }
 
     private void EnsureFragmentedStarted()
