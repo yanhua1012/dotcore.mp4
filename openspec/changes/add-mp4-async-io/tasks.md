@@ -22,7 +22,7 @@
 - [x] 3.1 加入failing Writer factory tests，涵蓋兩個overloads、options snapshot、progressive/faststart async header、fragmented zero-output lazy start、invalid capability/options zero-success-header、mid-header cancel/exception的partial output/no returned instance及failure ownership。
 - [x] 3.2 加入failing operation-gate tests，以delayed active operation驗證async/async與sync/async configure/write/finalize/dispose overlap fail-fast、active operation仍完成且rejected call不改state。
 - [x] 3.3 加入failing cancellation/fault-state tests，區分already-cancelled與pre-output validation可恢復、已回傳Writer跨越output-risk boundary後cancel/任意exception terminal Faulted、Faulted後methods/aliases的`InvalidOperationException`及僅Dispose可用。
-- [ ] 3.4 加入failing precedence matrix，涵蓋cancelled token搭配disposed/Faulted/Active/Finalized instance、null sample及合法Idle operation，並加入final I/O成功後late cancellation仍commit成功的deterministic gate。
+- [x] 3.4 加入failing precedence matrix，涵蓋cancelled token搭配disposed/Faulted/Active/Finalized instance、null sample及合法Idle operation，並加入final I/O成功後late cancellation仍commit成功的deterministic gate。
 - [x] 3.5 執行Writer factory/state targeted tests，保存async factory、operation gate、precedence及terminal state尚未存在的red baseline。
 - [x] 3.6 實作non-blocking canonical operation guard與Idle/Active/Finalized/Faulted transitions，讓aliases只轉送canonical methods，並保持sequential sync/async mixing合法。
 - [x] 3.7 分離Writer capability/options/state初始化與header planning，實作兩個具正體中文 XML documentation 的`CreateAsync` overload；fragmented保持lazy start。
@@ -32,7 +32,7 @@
 ## 4. Progressive async ingestion 與 finalization slice
 
 - [x] 4.1 加入failing progressive tests，要求async audio immediate output、pending video access-unit flush、multi-NAL order、mdat backpatch及moov append只使用caller Stream async writes。
-- [ ] 4.2 加入failing progressive cancel/failure tests，分別注入mid-audio、mid-video length/payload、mid-backpatch及mid-moov，assert partial bytes、no false commit與terminal Faulted。
+- [x] 4.2 加入failing progressive cancel/failure tests，分別注入mid-audio、mid-video length/payload、mid-backpatch及mid-moov，assert partial bytes、no false commit與terminal Faulted。
 - [x] 4.3 加入failing pure-async及sequential mixed H.264/H.265/AAC fixtures，要求與sync progressive SHA-256、box/payload摘要及Reader round-trip完全相同。
 - [x] 4.4 執行progressive targeted tests，保存canonical async write/finalize path尚未貫穿external I/O的red baseline。
 - [x] 4.5 實作具正體中文 XML documentation 的`WriteVideoNalUnitAsync`與`WriteAudioSampleAsync`，共用validation/planning並以bounded prefix/payload `WriteAsync`完成progressive ingestion。
@@ -43,7 +43,7 @@
 
 - [x] 5.1 加入failing fragmented tests，要求first media以async writes輸出initial metadata，下一keyframe與finalization以async writes輸出keyframe-aligned `moof`/`mdat`及video/AAC payload。
 - [x] 5.2 加入failing async non-seekable Stream tests，涵蓋H.264/H.265、short/long GOP、mixed AAC、exact buffer boundary及pure async/mixed byte-identical round-trip。
-- [ ] 5.3 加入failing cancel/exception matrix，分別在initial metadata、moof、mdat header與mid video/AAC payload中斷，assert selected samples/accounting/sequence不提前commit且Writer terminal Faulted。
+- [x] 5.3 加入failing cancel/exception matrix，分別在initial metadata、moof、mdat header與mid video/AAC payload中斷，assert selected samples/accounting/sequence不提前commit且Writer terminal Faulted。
 - [x] 5.4 執行fragmented targeted tests，保存startup/fragment flush仍呼叫同步external writes的red baseline。
 - [x] 5.5 將initial metadata building與external output分離，實作`EnsureFragmentedStartedAsync`並只在完整async output後標記started。
 - [x] 5.6 實作`FlushFragmentAsync`與fragment payload async range writes，維持video-first/audio-second order、bounded call model及成功後state commit。
@@ -52,13 +52,13 @@
 
 ## 6. Faststart async relocation slice
 
-- [ ] 6.1 加入failing faststart tests，要求fixed 64 KiB buffer、同步SetLength/position controls、async-only relocation Read/Write、moov placement及chunk offsets。
-- [ ] 6.2 加入failing relocation cancellation/failure cases，涵蓋SetLength、Seek/Position、mid-read、partial async read、mid-shift write與final moov write的任意exception，assert diagnostics、partial-output warning及terminal Faulted。
-- [ ] 6.3 加入failing H.264/H.265/AAC pure async及sequential mixed faststart comparison，要求sync SHA-256、box/payload摘要與Reader round-trip parity。
-- [ ] 6.4 執行faststart targeted tests，保存relocation仍使用同步caller Stream Read/Write的red baseline。
-- [ ] 6.5 實作cancellable `RelocateMdatForFastStartAsync`，以`ReadAsync`填滿每個backward chunk、`WriteAsync`搬移並保持checked offsets與bounded memory。
-- [ ] 6.6 將`FinalizeFileAsync` faststart branch接至async relocation與final metadata output，維持既有`stco`/`co64` stable-layout logic。
-- [ ] 6.7 執行faststart async、failure、fixed-offset、idempotency及sync regression tests至green。
+- [x] 6.1 加入failing faststart tests，要求fixed 64 KiB buffer、同步SetLength/position controls、async-only relocation Read/Write、moov placement及chunk offsets。
+- [x] 6.2 加入failing relocation cancellation/failure cases，涵蓋SetLength、Seek/Position、mid-read、partial async read、mid-shift write與final moov write的任意exception，assert diagnostics、partial-output warning及terminal Faulted。
+- [x] 6.3 加入failing H.264/H.265/AAC pure async及sequential mixed faststart comparison，要求sync SHA-256、box/payload摘要與Reader round-trip parity。
+- [x] 6.4 執行faststart targeted tests，保存relocation仍使用同步caller Stream Read/Write的red baseline。
+- [x] 6.5 實作cancellable `RelocateMdatForFastStartAsync`，以`ReadAsync`填滿每個backward chunk、`WriteAsync`搬移並保持checked offsets與bounded memory。
+- [x] 6.6 將`FinalizeFileAsync` faststart branch接至async relocation與final metadata output，維持既有`stco`/`co64` stable-layout logic。
+- [x] 6.7 執行faststart async、failure、fixed-offset、idempotency及sync regression tests至green。
 
 ## 7. Cross-layout compatibility 與 integration verification
 

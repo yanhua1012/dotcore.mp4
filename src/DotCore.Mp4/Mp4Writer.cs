@@ -348,7 +348,6 @@ public sealed class Mp4Writer : IDisposable
     /// <returns>代表非同步寫入的工作。</returns>
     public Task WriteVideoNalUnitAsync(EncodedVideoNalUnit sample, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
         EnterOperation();
         if (sample == null)
         {
@@ -374,6 +373,7 @@ public sealed class Mp4Writer : IDisposable
             ValidateTimedSample(dts, duration, _lastVideoDts, "video");
             var nalUnits = NalUnits.Normalize(sample.DataBytes);
             ValidateNalLengths(nalUnits, _videoConfiguration!.NalLengthSize);
+            ThrowIfCancelledPreOutput(cancellationToken);
             if (_mode == Mp4WriteMode.Fragmented)
             {
                 await WriteFragmentedVideoNalUnitsAsync(sample, nalUnits, pts, dts, duration, cancellationToken).ConfigureAwait(false);
@@ -421,7 +421,6 @@ public sealed class Mp4Writer : IDisposable
     /// <returns>代表非同步寫入的工作。</returns>
     public Task WriteAudioSampleAsync(EncodedAudioSample sample, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
         EnterOperation();
         if (sample == null)
         {
@@ -445,6 +444,7 @@ public sealed class Mp4Writer : IDisposable
         try
         {
             ValidateTimedSample(dts, duration, _lastAudioDts, "audio");
+            ThrowIfCancelledPreOutput(cancellationToken);
             if (_mode == Mp4WriteMode.Fragmented)
             {
                 await WriteFragmentedAudioAsync(sample, pts, dts, duration, cancellationToken).ConfigureAwait(false);
@@ -2042,6 +2042,19 @@ public sealed class Mp4Writer : IDisposable
     private void ExitOperationToIdleOnSyncFailure()
     {
         if (_state == WriterState.Active) _state = WriterState.Idle;
+    }
+
+    private void ThrowIfCancelledPreOutput(CancellationToken cancellationToken)
+    {
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        catch (OperationCanceledException)
+        {
+            ExitOperationToIdleOnSyncFailure();
+            throw;
+        }
     }
 
     private sealed class PendingVideoAccessUnit
