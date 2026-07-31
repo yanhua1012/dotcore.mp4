@@ -906,3 +906,30 @@
 - `openspec validate --all --strict --json --no-interactive` passed 4/4 current items with informational long-text notices only. `git diff --check` and `git diff --cached --check` passed.
 - Independent inventory and final review corrected deterministic Release benchmark setup, zero-match task counting, approved TFM/dependency exceptions, subagent file ownership, and a reproducible Console command. Final review: 0 CRITICAL, 0 WARNING.
 - No product build/test was started for `/init`: concurrent external work changed `add-aac-config-factory` from 0/11 to 11/11 and modified source/tests while this documentation task was running. Those edits were preserved and were not reviewed or claimed by this task.
+
+# 2026-07-31 Implement `add-mp4-recording-recovery`
+
+## Acceptance criteria
+
+- [ ] Implement the 31 OpenSpec tasks for path-based, journal-backed MP4 recording recovery.
+- [ ] Preserve existing `Mp4Writer(Stream, ...)` public behavior and fixed output bytes.
+- [ ] Verify unit, integration, interoperability, benchmark, OpenSpec, and diff-hygiene gates.
+
+## Checkpoints
+
+- [x] A — Define and test the public recording recovery API contract.
+- [x] B — Implement journal, capture paths, and recording writer lifecycle.
+- [x] C — Implement exact, structural, and heuristic recovery paths.
+- [x] D — Add documentation, integration coverage, and complete validation.
+
+## Risk and rollback
+
+- Risk level: high. This change adds filesystem lifecycle and recovery behavior around the existing MP4 writer.
+- Rollback: revert only the files changed for `add-mp4-recording-recovery`; the legacy stream-based API remains isolated.
+
+## Current evidence
+
+- `dotnet build DotCore.Mp4.sln --no-restore /p:RestoreFallbackFolders= /p:BuildProjectReferences=false /p:DisableFastUpToDateCheck=true`: 0 warnings, 0 errors.
+- Unit tests: 200 passed, 0 failed, 0 skipped. Integration tests: 51 passed, 0 failed, 0 skipped.
+- Recovery sync/async H.264/H.265 x progressive/faststart/fragmented matrix and structural-prefix recovery are covered by current tests.
+- Benchmark `baseline --update`, `baseline`, and `self-test` pass after deliberately adding the recovery public API to the compatibility baseline.

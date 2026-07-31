@@ -31,6 +31,21 @@ Fragmented mode 在第一個 media sample 時凍結 codec tracks，要求至少�
 
 Reader 會在建構時將完整 MP4 snapshot 至 managed memory，不會 tail-follow 持續成長中的 fMP4。單一輸入上限為 256 MiB，累積最多 1,000,000 samples，各 sample table 最多 1,000,000 entries，每個 container 最多 100,000 boxes，另限制 4,096 fragments、每 fragment 1,024 `traf` 與 4,096 `trun`。MPEG-4 descriptor nesting 最深 32 層且最多走訪 4,096 個 descriptors。超出限制、fragment sequence/timeline 倒退、sample overlap 或 range 不在對應 `mdat` 內，都會在大額配置或 payload delivery 前以 `Mp4FormatException` 拒絕。
 
+## 可復原的檔案錄影
+
+需要處理程序終止、裝置斷電或 I/O 中斷後的本機錄影時，請使用 path-based 的 `Mp4RecordingWriter`，而非既有的 `Mp4Writer(Stream, ...)`。它只接受本機 target path，並在 target 的**同一資料夾**管理下列 artifacts：
+
+```text
+recording.mp4.dotcore-journal      sidecar journal
+recording.mp4.dotcore-capture-*    錄影中的 immutable capture
+recording.mp4.dotcore-recover-*    finalization/recovery 的 temporary delivery
+recording.mp4                      僅在 strict 驗證後交付的 target
+```
+
+journal 的固定名稱是 `<target-file-name>.dotcore-journal`。每個成功寫入的 payload 才會追加可驗證的 commit metadata；正常 `FinalizeFile()` 或成功 `Mp4RecordingRecovery.Recover()` 會先在同資料夾建立、關閉並以 `Mp4Reader` strict 驗證 temporary output，再交付 target，最後盡力刪除 journal、capture 與 staging artifacts。若清理在交付後失敗，留下的 stale journal 可安全重試；重試只驗證既有 target 並清理 stale artifacts，不會重建或覆寫媒體。
+
+下列 scope 特意不呼叫 `FinalizeFile()`，模擬下一次啟動時可由 journal 精確修復的中斷錄影。正式正常流程仍應呼叫 `FinalizeFile()`；`Mp4RecordingRecoveryResult.Tier` 可明確區分 `Exact`、無 journal fragmented 的 `Structural`、明確 opt-in 的 `Heuristic` 與 `NoRecoverableMedia`。
+
 同步基本使用方式：
 
 <!-- snippet: sync-round-trip -->
@@ -56,8 +71,36 @@ using var syncReader = new Mp4Reader(syncInput);
 syncReader.VideoNalUnitRead += (_, sample) => Console.WriteLine(sample.PresentationTimestamp);
 syncReader.AacSampleRead += (_, sample) => Console.WriteLine(sample.Data.Length);
 syncReader.Read();
+
+{
+    var interruptedRecordingPath = Path.GetFullPath("interrupted-recording.mp4");
+    using (var recordingWriter = new Mp4RecordingWriter(
+        interruptedRecordingPath,
+        new Mp4WriterOptions { Mode = Mp4WriteMode.Fragmented }))
+    {
+        recordingWriter.SetVideoCodecConfiguration(videoConfiguration);
+        recordingWriter.SetAudioCodecConfiguration(aacConfiguration);
+        recordingWriter.WriteVideoNalUnit(new EncodedVideoNalUnit(nal, pts, dts, duration, isKeyFrame));
+        recordingWriter.WriteAudioSample(new EncodedAudioSample(aacBytes, pts, dts, duration));
+        // 正常結束時呼叫 recordingWriter.FinalizeFile()；此範例保留中斷 artifacts。
+    }
+
+    Mp4RecordingRecoveryResult recovery = Mp4RecordingRecovery.Recover(
+        interruptedRecordingPath,
+        new Mp4RecordingRecoveryOptions { EnableHeuristicRecovery = false });
+    if (recovery.Tier != Mp4RecordingRecoveryTier.Exact)
+    {
+        throw new InvalidOperationException("錄影沒有可精確修復的媒體。");
+    }
+
+    using var recoveredInput = File.OpenRead(interruptedRecordingPath);
+    using var recoveredReader = new Mp4Reader(recoveredInput);
+    recoveredReader.Read();
+}
 ```
 <!-- endsnippet -->
+
+復原只處理由此 facade 建立的本機 artifacts；它不是 remote ingest、RTSP client、codec encoder/decoder 或 background service。`Structural` 僅保留可驗證的完整 fragmented pairs。`Heuristic` 預設關閉，必須設為 `EnableHeuristicRecovery = true`，且只會嘗試有完整 H.264/H.265 parameter sets 的 video-only salvage；它不猜測 AAC boundary、原始 timestamp、access-unit grouping 或 keyframe 語意。journal 遺失、空白、損壞、capture 短於 commit boundary、空檔或證據不足時會回傳 `NoRecoverableMedia`，不會建立或取代 target，並保留 artifacts 供診斷。此功能不保證任意位元損壞、未持久化 storage 寫入或跨檔案系統搬移後仍可修復。
 
 ## 非同步 I/O
 
@@ -84,6 +127,8 @@ reader.Dispose();
 
 Writer 的三種 layout 都提供 async factory 與 canonical async sample/finalization methods；metadata 先在內部 `MemoryStream` 同步建立，外部 payload I/O 走 caller Stream 的 async virtual methods，external async call count 以 metadata block/sample/NAL range 為界，不隨 payload byte length 逐 byte 增加。
 
+`Mp4RecordingWriter.CreateAsync()` 與 `Mp4RecordingRecovery.RecoverAsync()` 對應相同的本機 journal 與同資料夾 delivery 契約；它們不會連線至 remote source 或 RTSP endpoint。
+
 <!-- snippet: writer-create-async -->
 ```csharp
 await using var output = new FileStream(
@@ -108,6 +153,34 @@ await writer.WriteAudioSampleAsync(
     cancellationToken: default);
 await writer.FinalizeFileAsync(cancellationToken: default);
 writer.Dispose();
+
+{
+    var interruptedAsyncRecordingPath = Path.GetFullPath("interrupted-async-recording.mp4");
+    using (Mp4RecordingWriter recordingWriter = await Mp4RecordingWriter.CreateAsync(
+        interruptedAsyncRecordingPath,
+        new Mp4WriterOptions { Mode = Mp4WriteMode.Fragmented },
+        cancellationToken: cancellationToken))
+    {
+        await recordingWriter.SetVideoCodecConfigurationAsync(videoConfiguration, cancellationToken);
+        await recordingWriter.SetAudioCodecConfigurationAsync(aacConfiguration, cancellationToken);
+        await recordingWriter.WriteVideoNalUnitAsync(
+            new EncodedVideoNalUnit(nal, pts, dts, duration, isKeyFrame),
+            cancellationToken);
+        await recordingWriter.WriteAudioSampleAsync(
+            new EncodedAudioSample(aacBytes, pts, dts, duration),
+            cancellationToken);
+        // 正常結束時呼叫並 await recordingWriter.FinalizeFileAsync(cancellationToken)。
+    }
+
+    Mp4RecordingRecoveryResult asyncRecovery = await Mp4RecordingRecovery.RecoverAsync(
+        interruptedAsyncRecordingPath,
+        new Mp4RecordingRecoveryOptions { EnableHeuristicRecovery = false },
+        cancellationToken);
+    if (asyncRecovery.Tier != Mp4RecordingRecoveryTier.Exact)
+    {
+        throw new InvalidOperationException("錄影沒有可精確修復的媒體。");
+    }
+}
 ```
 <!-- endsnippet -->
 
